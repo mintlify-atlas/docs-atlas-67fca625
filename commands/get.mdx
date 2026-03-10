@@ -1,0 +1,151 @@
+---
+title: "portless get"
+description: "Print the URL for a service without running it"
+---
+
+## Overview
+
+The `portless get` command constructs and prints the URL for a service using the same hostname and worktree logic as `portless run`, without actually starting the service. This is useful for wiring services together or passing URLs as environment variables.
+
+## Syntax
+
+```bash
+portless get <name> [options]
+```
+
+## Parameters
+
+<ParamField path="name" type="string" required>
+  The service name to construct a URL for. Uses the same naming logic as `portless run` including git worktree detection.
+</ParamField>
+
+## Options
+
+<ParamField path="--no-worktree" type="boolean">
+  Skip git worktree prefix detection and use only the base name. Useful when you want the plain URL regardless of which worktree you're in.
+</ParamField>
+
+<ParamField path="--help, -h" type="boolean">
+  Show help information for the get command.
+</ParamField>
+
+## Examples
+
+### Basic Usage
+
+Get the URL for a service:
+
+```bash
+portless get backend
+# Output: http://backend.localhost:1355
+```
+
+### In a Git Worktree
+
+When run from a linked worktree on branch `auth`:
+
+```bash
+portless get backend
+# Output: http://auth.backend.localhost:1355
+```
+
+### Skip Worktree Detection
+
+Force the base URL without worktree prefix:
+
+```bash
+portless get backend --no-worktree
+# Output: http://backend.localhost:1355
+```
+
+### Wiring Services Together
+
+Use `portless get` to pass URLs as environment variables:
+
+```bash
+# Set backend URL for frontend dev server
+BACKEND_URL=$(portless get backend) npm run dev
+```
+
+```bash
+# In a script
+export API_URL=$(portless get api)
+export AUTH_URL=$(portless get auth)
+pnpm dev
+```
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="code">
+    Pass service URLs to applications that need to communicate with other portless services
+  </Card>
+  <Card title="Scripts" icon="terminal">
+    Build shell scripts that reference portless service URLs without hardcoding
+  </Card>
+  <Card title="CI/CD" icon="rocket">
+    Generate URLs in automation workflows that mirror local development setup
+  </Card>
+  <Card title="Documentation" icon="book">
+    Display service URLs in documentation or help messages
+  </Card>
+</CardGroup>
+
+## How It Works
+
+The `portless get` command:
+
+1. **Discovers state** - Reads the proxy port and configuration
+2. **Applies worktree logic** - Detects if you're in a git worktree and prepends the branch name as a subdomain
+3. **Constructs URL** - Builds the complete `.localhost` URL
+4. **Prints to stdout** - Outputs only the URL (no extra formatting) so it can be captured in shell variables
+
+<Info>
+  `portless get` does not check if the service is actually running. It simply constructs what the URL would be if the service were running with that name.
+</Info>
+
+## Comparison with portless list
+
+| Feature | `portless get` | `portless list` |
+|---------|---------------|-----------------|
+| Purpose | Construct URL for any name | Show active routes |
+| Checks if running | No | Yes |
+| Output format | Plain URL only | Formatted table |
+| Git worktree aware | Yes | No |
+| Use in scripts | Yes (stdout only) | No (formatted output) |
+
+## Error Handling
+
+### Missing Service Name
+
+```bash
+portless get
+```
+
+**Error:** `Missing service name.`
+
+**Solution:** Provide a service name as the first argument.
+
+### Unknown Flag
+
+```bash
+portless get backend --unknown
+```
+
+**Error:** `Unknown flag "--unknown".`
+
+**Solution:** Use only supported flags: `--no-worktree`, `--help`
+
+## Related Commands
+
+<CardGroup cols={3}>
+  <Card title="portless run" icon="play" href="/commands/run">
+    Run a service with auto-inferred name
+  </Card>
+  <Card title="portless list" icon="list" href="/commands/list">
+    Show all active routes
+  </Card>
+  <Card title="Git Worktrees" icon="code-branch" href="/git-worktrees">
+    Learn about worktree detection
+  </Card>
+</CardGroup>

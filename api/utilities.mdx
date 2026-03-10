@@ -1,0 +1,414 @@
+---
+title: "Utility Functions"
+description: "Helper functions for hostname parsing, file management, and /etc/hosts manipulation"
+---
+
+## URL & Hostname Utilities
+
+### parseHostname
+
+Parse and normalize a hostname input for use as a `.localhost` subdomain.
+
+```typescript
+function parseHostname(input: string): string
+```
+
+**Behavior:**
+- Strips protocol prefixes (`http://`, `https://`)
+- Converts to lowercase
+- Appends `.localhost` if not present
+- Validates hostname characters (letters, digits, hyphens, dots only)
+- Enforces DNS label length limits (63 characters per label)
+- Rejects consecutive dots and invalid patterns
+
+<ParamField path="input" type="string" required>
+  The hostname to parse. Can include protocol prefixes, which will be stripped.
+</ParamField>
+
+**Returns:** Normalized `.localhost` hostname
+
+**Throws:** `Error` if the hostname is invalid
+
+**Examples:**
+
+```typescript
+import { parseHostname } from "portless";
+
+parseHostname("myapp");
+// => "myapp.localhost"
+
+parseHostname("api.myapp");
+// => "api.myapp.localhost"
+
+parseHostname("http://myapp.localhost");
+// => "myapp.localhost"
+
+parseHostname("MyApp");
+// => "myapp.localhost" (converted to lowercase)
+
+// Invalid examples (throw errors):
+parseHostname("my app");  // Error: spaces not allowed
+parseHostname("my_app");  // Error: underscores not allowed
+parseHostname("");        // Error: hostname cannot be empty
+```
+
+### formatUrl
+
+Format a `.localhost` URL with the correct protocol and port.
+
+```typescript
+function formatUrl(
+  hostname: string,
+  proxyPort: number,
+  tls?: boolean
+): string
+```
+
+Constructs a complete URL for a `.localhost` hostname. Omits the port when it matches the protocol default (80 for HTTP, 443 for HTTPS).
+
+<ParamField path="hostname" type="string" required>
+  The `.localhost` hostname (e.g., "api.myapp.localhost")
+</ParamField>
+
+<ParamField path="proxyPort" type="number" required>
+  The proxy port number
+</ParamField>
+
+<ParamField path="tls" type="boolean" default={false}>
+  Whether to use HTTPS protocol
+</ParamField>
+
+**Returns:** Complete URL string
+
+**Examples:**
+
+```typescript
+import { formatUrl } from "portless";
+
+formatUrl("api.localhost", 1355);
+// => "http://api.localhost:1355"
+
+formatUrl("api.localhost", 80);
+// => "http://api.localhost" (port omitted)
+
+formatUrl("api.localhost", 443, true);
+// => "https://api.localhost" (port omitted)
+
+formatUrl("api.localhost", 8443, true);
+// => "https://api.localhost:8443"
+```
+
+### escapeHtml
+
+Escape HTML special characters to prevent XSS attacks.
+
+```typescript
+function escapeHtml(str: string): string
+```
+
+Converts `&`, `<`, `>`, `"`, and `'` to their HTML entity equivalents.
+
+<ParamField path="str" type="string" required>
+  The string to escape
+</ParamField>
+
+**Returns:** HTML-safe string
+
+**Examples:**
+
+```typescript
+import { escapeHtml } from "portless";
+
+escapeHtml("<script>alert('XSS')</script>");
+// => "&lt;script&gt;alert(&#39;XSS&#39;)&lt;/script&gt;"
+
+escapeHtml('Hello "world" & <friends>');
+// => "Hello &quot;world&quot; &amp; &lt;friends&gt;"
+```
+
+## System Utilities
+
+### isErrnoException
+
+Type guard for Node.js system errors with error codes.
+
+```typescript
+function isErrnoException(err: unknown): err is NodeJS.ErrnoException
+```
+
+Check if an error object is a Node.js system error with an error code like `EADDRINUSE`, `EACCES`, etc.
+
+<ParamField path="err" type="unknown" required>
+  The error object to check
+</ParamField>
+
+**Returns:** `true` if the error is a `NodeJS.ErrnoException`, `false` otherwise
+
+**Examples:**
+
+```typescript
+import { isErrnoException } from "portless";
+
+try {
+  // Some operation that might fail
+  fs.readFileSync("/nonexistent");
+} catch (err) {
+  if (isErrnoException(err)) {
+    if (err.code === "ENOENT") {
+      console.log("File not found");
+    } else if (err.code === "EACCES") {
+      console.log("Permission denied");
+    }
+  }
+}
+```
+
+### fixOwnership
+
+Fix file ownership when running under sudo.
+
+```typescript
+function fixOwnership(...paths: string[]): void
+```
+
+When running as root via sudo, changes file ownership back to the real user. This prevents files created by sudo from being owned by root. No-op when not running as root.
+
+<ParamField path="...paths" type="string[]" required>
+  File or directory paths to fix ownership on
+</ParamField>
+
+**Examples:**
+
+```typescript
+import { fixOwnership } from "portless";
+import * as fs from "node:fs";
+
+// Create a file under sudo
+fs.writeFileSync("/tmp/portless/routes.json", "[]");
+
+// Fix ownership so the real user can access it later
+fixOwnership("/tmp/portless/routes.json");
+```
+
+## /etc/hosts Management
+
+These functions manipulate `/etc/hosts` to add or remove `.localhost` entries for Safari compatibility.
+
+### syncHostsFile
+
+Sync `/etc/hosts` to include entries for given hostnames.
+
+```typescript
+function syncHostsFile(hostnames: string[]): boolean
+```
+
+Adds a portless-managed block to `/etc/hosts` mapping each hostname to `127.0.0.1`. Requires root access (sudo).
+
+<ParamField path="hostnames" type="string[]" required>
+  Array of `.localhost` hostnames to add
+</ParamField>
+
+**Returns:** `true` on success, `false` on failure
+
+**Examples:**
+
+```typescript
+import { syncHostsFile } from "portless";
+
+syncHostsFile(["api.localhost", "app.localhost"]);
+// Adds to /etc/hosts:
+// # portless-start
+// 127.0.0.1 api.localhost
+// 127.0.0.1 app.localhost
+// # portless-end
+```
+
+### cleanHostsFile
+
+Remove the portless-managed block from `/etc/hosts`.
+
+```typescript
+function cleanHostsFile(): boolean
+```
+
+Removes all entries added by `syncHostsFile`. Requires root access (sudo).
+
+**Returns:** `true` on success, `false` on failure
+
+**Examples:**
+
+```typescript
+import { cleanHostsFile } from "portless";
+
+cleanHostsFile();
+// Removes the portless-managed block from /etc/hosts
+```
+
+### extractManagedBlock
+
+Extract portless-managed entries from `/etc/hosts` content.
+
+```typescript
+function extractManagedBlock(content: string): string[]
+```
+
+<ParamField path="content" type="string" required>
+  The raw `/etc/hosts` file content
+</ParamField>
+
+**Returns:** Array of lines between portless markers (excluding the markers themselves)
+
+**Examples:**
+
+```typescript
+import { extractManagedBlock } from "portless";
+import * as fs from "node:fs";
+
+const content = fs.readFileSync("/etc/hosts", "utf-8");
+const managed = extractManagedBlock(content);
+// => ["127.0.0.1 api.localhost", "127.0.0.1 app.localhost"]
+```
+
+### removeBlock
+
+Remove the portless-managed block from `/etc/hosts` content.
+
+```typescript
+function removeBlock(content: string): string
+```
+
+<ParamField path="content" type="string" required>
+  The raw `/etc/hosts` file content
+</ParamField>
+
+**Returns:** Content with portless block removed
+
+**Examples:**
+
+```typescript
+import { removeBlock } from "portless";
+import * as fs from "node:fs";
+
+const content = fs.readFileSync("/etc/hosts", "utf-8");
+const cleaned = removeBlock(content);
+fs.writeFileSync("/etc/hosts", cleaned);
+```
+
+### buildBlock
+
+Build a portless-managed block for given hostnames.
+
+```typescript
+function buildBlock(hostnames: string[]): string
+```
+
+<ParamField path="hostnames" type="string[]" required>
+  Array of `.localhost` hostnames
+</ParamField>
+
+**Returns:** String containing the portless-managed block with markers
+
+**Examples:**
+
+```typescript
+import { buildBlock } from "portless";
+
+const block = buildBlock(["api.localhost", "app.localhost"]);
+console.log(block);
+// # portless-start
+// 127.0.0.1 api.localhost
+// 127.0.0.1 app.localhost
+// # portless-end
+```
+
+### getManagedHostnames
+
+Get currently managed hostnames from `/etc/hosts`.
+
+```typescript
+function getManagedHostnames(): string[]
+```
+
+**Returns:** Array of hostnames currently in the portless-managed block
+
+**Examples:**
+
+```typescript
+import { getManagedHostnames } from "portless";
+
+const hostnames = getManagedHostnames();
+// => ["api.localhost", "app.localhost"]
+```
+
+### checkLocalhostResolution
+
+Check whether a `.localhost` subdomain resolves to `127.0.0.1`.
+
+```typescript
+function checkLocalhostResolution(hostname: string): Promise<boolean>
+```
+
+Tests if the system DNS resolver correctly resolves a `.localhost` hostname to `127.0.0.1`. Useful for detecting Safari/DNS issues.
+
+<ParamField path="hostname" type="string" required>
+  The `.localhost` hostname to check
+</ParamField>
+
+**Returns:** Promise that resolves to `true` if resolution works, `false` otherwise
+
+**Examples:**
+
+```typescript
+import { checkLocalhostResolution } from "portless";
+
+const works = await checkLocalhostResolution("api.localhost");
+if (!works) {
+  console.log("DNS resolution failed - Safari may not work");
+  console.log("Run: sudo portless hosts sync");
+}
+```
+
+## Import Examples
+
+```typescript
+// ESM
+import {
+  parseHostname,
+  formatUrl,
+  escapeHtml,
+  isErrnoException,
+  fixOwnership,
+  syncHostsFile,
+  cleanHostsFile,
+  extractManagedBlock,
+  removeBlock,
+  buildBlock,
+  getManagedHostnames,
+  checkLocalhostResolution,
+} from "portless";
+
+// CommonJS
+const {
+  parseHostname,
+  formatUrl,
+  escapeHtml,
+  isErrnoException,
+  fixOwnership,
+  syncHostsFile,
+  cleanHostsFile,
+} = require("portless");
+```
+
+## Related
+
+<CardGroup cols={3}>
+  <Card title="API Overview" icon="book" href="/api/overview">
+    Getting started with the programmatic API
+  </Card>
+  <Card title="Type Definitions" icon="code" href="/api/types">
+    TypeScript interfaces and types
+  </Card>
+  <Card title="Safari DNS" icon="browser" href="/safari-dns">
+    Learn about /etc/hosts management
+  </Card>
+</CardGroup>
