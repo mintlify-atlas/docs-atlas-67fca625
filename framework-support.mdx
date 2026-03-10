@@ -1,0 +1,250 @@
+---
+title: Framework Support
+description: Which frameworks work automatically with portless and which need flag injection
+---
+
+Portless assigns apps a random port (4000-4999) and sets the `PORT` and `HOST` environment variables. Most frameworks respect these variables automatically. For frameworks that ignore `PORT`, portless auto-injects the correct CLI flags.
+
+## Frameworks That Respect `PORT`
+
+These frameworks work automatically with portless - no special configuration needed:
+
+- **Next.js** - Reads `PORT` and `HOST` environment variables
+- **Express** - Standard Node.js server respects `PORT`
+- **Nuxt** - Reads `PORT` and `HOST` from environment
+- **Remix** - Uses `PORT` for dev server
+- **NestJS** - Respects `PORT` environment variable
+- **Fastify** - Standard Node.js server behavior
+- **Koa** - Standard Node.js server behavior
+- **SvelteKit** - Uses Vite under the hood (handled by auto-injection)
+- **Hono** - Respects `PORT` environment variable
+- **Most Node.js servers** - Standard convention
+
+Example:
+
+```bash
+portless myapp next dev
+# Next.js automatically uses the PORT environment variable
+# No flags needed
+```
+
+## Frameworks That Need Flag Injection
+
+These frameworks ignore the `PORT` environment variable and require CLI flags. Portless detects these commands and **automatically injects** the correct flags:
+
+### Vite
+
+**Detection**: Command starts with `vite`
+
+**Injected flags**:
+- `--port <port>` - Sets the port
+- `--strictPort` - Prevents Vite from picking a different port if the assigned one is in use
+- `--host 127.0.0.1` - Binds to IPv4 localhost (portless proxy connects via 127.0.0.1)
+
+**Example**:
+
+```bash
+portless myapp vite
+# Automatically becomes: vite --port 4123 --strictPort --host 127.0.0.1
+```
+
+**Frameworks using Vite**:
+- SvelteKit (`vite dev`)
+- Solid Start
+- Qwik
+- Analog (Angular + Vite)
+
+### Astro
+
+**Detection**: Command starts with `astro`
+
+**Injected flags**:
+- `--port <port>`
+- `--host 127.0.0.1`
+
+Astro does not support `--strictPort`, so the port may change if unavailable.
+
+**Example**:
+
+```bash
+portless myapp astro dev
+# Automatically becomes: astro dev --port 4123 --host 127.0.0.1
+```
+
+### React Router (v7+)
+
+**Detection**: Command starts with `react-router`
+
+**Injected flags**:
+- `--port <port>`
+- `--strictPort`
+- `--host 127.0.0.1`
+
+**Example**:
+
+```bash
+portless myapp react-router dev
+# Automatically becomes: react-router dev --port 4123 --strictPort --host 127.0.0.1
+```
+
+### Angular
+
+**Detection**: Command starts with `ng`
+
+**Injected flags**:
+- `--port <port>`
+- `--host 127.0.0.1`
+
+Angular does not support `--strictPort`.
+
+**Example**:
+
+```bash
+portless myapp ng serve
+# Automatically becomes: ng serve --port 4123 --host 127.0.0.1
+```
+
+### Expo
+
+**Detection**: Command starts with `expo`
+
+**Injected flags**:
+- `--port <port>`
+- `--host localhost` (Expo requires `localhost` instead of `127.0.0.1`)
+
+**Example**:
+
+```bash
+portless myapp expo start
+# Automatically becomes: expo start --port 4123 --host localhost
+```
+
+### React Native
+
+**Detection**: Command starts with `react-native`
+
+**Injected flags**:
+- `--port <port>`
+- `--host 127.0.0.1`
+
+**Example**:
+
+```bash
+portless myapp react-native start
+# Automatically becomes: react-native start --port 4123 --host 127.0.0.1
+```
+
+## How Auto-Injection Works
+
+The `injectFrameworkFlags` function in `cli-utils.ts` inspects the command basename and appends flags before spawning the process:
+
+```ts
+// Example: ["vite", "dev"] becomes ["vite", "dev", "--port", "4123", "--strictPort", "--host", "127.0.0.1"]
+injectFrameworkFlags(commandArgs, port);
+```
+
+**Rules**:
+- Flags are **only injected if not already present** in the command
+- Only the **command basename** is checked (e.g., `/usr/local/bin/vite` matches `vite`)
+- The `PORT` environment variable is **still set** even when flags are injected
+
+<Warning>
+If you manually pass `--port` or `--host` to your command, portless will **not** override it. Your manual flags take precedence.
+</Warning>
+
+## Environment Variables
+
+Portless sets these environment variables for all child processes:
+
+- `PORT` - The assigned port (e.g., `4123`)
+- `HOST` - Always `127.0.0.1`
+- `PORTLESS_URL` - The public-facing URL (e.g., `http://myapp.localhost:1355`)
+
+Frameworks that respect `PORT` will use it automatically. Frameworks that ignore it will receive the injected flags instead.
+
+## Custom Frameworks
+
+If your framework ignores `PORT` and is not in the auto-injection list, you have two options:
+
+### Option 1: Pass Flags Manually
+
+Use the `PORT` environment variable in your command:
+
+```bash
+portless myapp mycli --port "$PORT"
+```
+
+Shell variable expansion happens before portless spawns the command, so `$PORT` is correctly substituted.
+
+### Option 2: Use a Wrapper Script
+
+Create a script that reads `PORT` and passes it to your framework:
+
+```bash
+#!/bin/bash
+mycli --port "$PORT" --host "$HOST"
+```
+
+Then run:
+
+```bash
+portless myapp ./start.sh
+```
+
+## Disabling Auto-Injection
+
+If you want to bypass portless entirely and run the command normally:
+
+```bash
+PORTLESS=0 pnpm dev
+# or
+PORTLESS=skip pnpm dev
+```
+
+This runs the command without the proxy, using the framework's default port.
+
+## Forcing a Specific Port
+
+If you need a fixed port instead of the auto-assigned range (4000-4999):
+
+```bash
+portless myapp --app-port 5000 next dev
+# or
+PORTLESS_APP_PORT=5000 portless myapp next dev
+```
+
+Portless will use port 5000 instead of finding a free port.
+
+## Strictness Behavior
+
+Some frameworks support "strict port" mode, which causes the server to fail if the port is unavailable:
+
+- **With `--strictPort`** (Vite, React Router): Portless guarantees the assigned port is used or the server exits with an error
+- **Without `--strictPort`** (Astro, Angular): The framework may silently pick a different port if the assigned one is busy
+
+For frameworks without strict port support, portless minimizes the TOCTOU (Time-of-Check-Time-of-Use) race by:
+1. Finding a free port immediately before spawning
+2. Using a random-first search strategy (tries 50 random ports before scanning sequentially)
+
+This makes port collisions extremely rare in practice.
+
+## IPv4 vs IPv6
+
+Portless connects to apps via `127.0.0.1` (IPv4). Some frameworks default to `::1` (IPv6), which would cause connection failures. To prevent this, portless injects `--host 127.0.0.1` for frameworks that need it.
+
+**Exception**: Expo requires `--host localhost` instead of an IP address.
+
+## Contributing New Framework Support
+
+If you use a framework that ignores `PORT` and isn't in the auto-injection list, you can add it to `FRAMEWORKS_NEEDING_PORT` in `cli-utils.ts`:
+
+```ts
+const FRAMEWORKS_NEEDING_PORT: Record<string, { strictPort: boolean }> = {
+  vite: { strictPort: true },
+  astro: { strictPort: false },
+  // Add your framework here
+  myframework: { strictPort: false },
+};
+```
+
+Set `strictPort: true` if the framework supports a flag that prevents it from silently choosing a different port.

@@ -1,0 +1,154 @@
+---
+title: Environment Variables
+description: Configure Portless behavior using environment variables
+---
+
+Portless supports several environment variables to customize its behavior. These can be set in your shell configuration files (`.bashrc`, `.zshrc`, etc.) or exported in your terminal session.
+
+## Proxy Configuration
+
+<ParamField path="PORTLESS_PORT" type="number" default="1355">
+  Override the default proxy port. The proxy will listen on this port instead of the default 1355.
+  
+  Ports below 1024 require sudo to bind. Portless automatically selects the appropriate state directory based on the port number:
+  - Ports < 1024: Uses `/tmp/portless` (system-wide, shared between root and non-root processes)
+  - Ports >= 1024: Uses `~/.portless` (user-specific)
+
+  ```bash
+  # Use port 3000 as the proxy port
+  export PORTLESS_PORT=3000
+  portless proxy start
+  ```
+</ParamField>
+
+<ParamField path="PORTLESS_HTTPS" type="string" default="">
+  Enable HTTPS/HTTP2 mode by default. Set to `1` or `true` to always start the proxy with TLS enabled.
+  
+  When enabled, Portless generates a local Certificate Authority (CA) and uses it to issue certificates for your `.localhost` domains. The CA is automatically added to your system trust store on first use.
+
+  ```bash
+  # Always use HTTPS
+  export PORTLESS_HTTPS=1
+  portless proxy start  # Starts with HTTPS/HTTP2
+  ```
+
+  You can override this with the `--no-tls` flag when starting the proxy.
+</ParamField>
+
+<ParamField path="PORTLESS_STATE_DIR" type="string" default="auto">
+  Override the state directory location. By default, Portless automatically selects the state directory based on the proxy port:
+  - Ports < 1024: `/tmp/portless`
+  - Ports >= 1024: `~/.portless`
+
+  Setting this variable forces Portless to use a specific directory regardless of the port number.
+
+  ```bash
+  # Use a custom state directory
+  export PORTLESS_STATE_DIR=/var/lib/portless
+  ```
+
+  See [State Directory](/state-directory) for more details on state directory structure and behavior.
+</ParamField>
+
+## Application Configuration
+
+<ParamField path="PORTLESS_APP_PORT" type="number" default="auto">
+  Use a fixed port for your application instead of automatically assigning one from the 4000-4999 range.
+  
+  Equivalent to the `--app-port` CLI flag. Useful when your application has specific port requirements or when you need to configure another service to connect to a known port.
+
+  ```bash
+  # Always run the app on port 5000
+  export PORTLESS_APP_PORT=5000
+  portless myapp npm start
+  ```
+</ParamField>
+
+<ParamField path="PORTLESS_SYNC_HOSTS" type="string" default="">
+  Automatically sync `/etc/hosts` whenever routes change. Set to `1` to enable.
+  
+  This is useful for Safari, which relies on the system DNS resolver and may not resolve `.localhost` subdomains automatically. When enabled, Portless adds entries to `/etc/hosts` for each registered route.
+
+  **Important:** The proxy must be started with `sudo` for this to work, as modifying `/etc/hosts` requires root permissions.
+
+  ```bash
+  # Enable automatic hosts file syncing
+  export PORTLESS_SYNC_HOSTS=1
+  sudo portless proxy start
+  ```
+
+  See [Safari DNS Issues](/safari-dns) for more details.
+</ParamField>
+
+<ParamField path="PORTLESS" type="string" default="">
+  Skip Portless entirely and run commands directly. Set to `0` or `skip` to bypass the proxy.
+  
+  This is useful when you temporarily need to run your application without Portless, or when debugging connection issues.
+
+  ```bash
+  # Run without Portless
+  PORTLESS=0 pnpm dev
+  # or
+  PORTLESS=skip pnpm dev
+  ```
+</ParamField>
+
+## Child Process Environment
+
+When Portless runs your application, it sets the following environment variables in the child process:
+
+<ParamField path="PORT" type="string">
+  The port your application should listen on. This is either an automatically assigned port from the 4000-4999 range, or the value of `PORTLESS_APP_PORT` if set.
+
+  Most web frameworks respect this variable. For frameworks that don't (Vite, Astro, React Router, Angular, Expo, React Native), Portless automatically injects `--port` and `--host` flags.
+</ParamField>
+
+<ParamField path="HOST" type="string" default="127.0.0.1">
+  The host your application should bind to. Always set to `127.0.0.1` to ensure the proxy can connect to your app.
+  
+  This prevents frameworks from binding to IPv6 `::1` instead of IPv4, which would make them unreachable by the proxy.
+</ParamField>
+
+<ParamField path="PORTLESS_URL" type="string">
+  The public URL of your application (e.g., `http://myapp.localhost:1355` or `https://myapp.localhost:1355`).
+  
+  Use this when your application needs to construct URLs pointing to itself, such as for OAuth callbacks or webhooks.
+
+  ```javascript
+  // Example: Using PORTLESS_URL in your app
+  const callbackUrl = `${process.env.PORTLESS_URL}/api/auth/callback`;
+  ```
+</ParamField>
+
+<ParamField path="__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS" type="string" default=".localhost">
+  Internal variable set for Vite to allow `.localhost` subdomains. This prevents Vite from blocking requests from the proxy.
+</ParamField>
+
+## Examples
+
+### Development Environment Setup
+
+```bash title="~/.zshrc or ~/.bashrc"
+# Use HTTPS by default for HTTP/2 multiplexing
+export PORTLESS_HTTPS=1
+
+# Use port 80 (requires sudo, but no port in URLs)
+export PORTLESS_PORT=80
+```
+
+### Team-Shared Configuration
+
+```bash title=".envrc (with direnv)"
+# Use a custom state directory for this project
+export PORTLESS_STATE_DIR=.portless
+
+# Always use port 3000 for the app
+export PORTLESS_APP_PORT=3000
+```
+
+### Debugging Without Portless
+
+```bash
+# Temporarily disable Portless
+PORTLESS=0 npm run dev
+```

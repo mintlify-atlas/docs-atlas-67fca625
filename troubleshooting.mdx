@@ -1,0 +1,416 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for Portless CLI
+---
+
+## Common Issues
+
+<AccordionGroup>
+  <Accordion title="Port conflict: 'Port 1355 is already in use'">
+    This error means another process is already listening on the proxy port.
+
+    **Solution:**
+
+    1. Stop the existing proxy first:
+       ```bash
+       portless proxy stop
+       ```
+
+    2. If that doesn't work, check what's using the port:
+       ```bash
+       lsof -ti tcp:1355
+       ```
+
+    3. Kill the process manually if needed:
+       ```bash
+       kill $(lsof -ti tcp:1355)
+       ```
+
+    4. Restart the proxy:
+       ```bash
+       portless proxy start
+       ```
+  </Accordion>
+
+  <Accordion title="Permission denied for port">
+    Ports below 1024 require root access.
+
+    **Error message:**
+    ```
+    Permission denied for port 80.
+    ```
+
+    **Solution:**
+
+    Either run with sudo for privileged ports:
+    ```bash
+    sudo portless proxy start -p 80
+    ```
+
+    Or use the default non-privileged port (no sudo needed):
+    ```bash
+    portless proxy start  # Uses port 1355 by default
+    ```
+  </Accordion>
+
+  <Accordion title="Route conflict: hostname already registered">
+    This happens when you try to run an app with a name that's already in use by another running process.
+
+    **Error message:**
+    ```
+    "myapp.localhost" is already registered by a running process (PID 12345).
+    Use --force to override.
+    ```
+
+    **Solutions:**
+
+    1. Stop the existing app first, then start yours
+    2. Use a different name for your app
+    3. Override the existing route with `--force`:
+       ```bash
+       portless myapp --force next dev
+       ```
+  </Accordion>
+
+  <Accordion title="Safari can't resolve .localhost subdomains">
+    Safari relies on the system DNS resolver, which may not handle `.localhost` subdomains on all configurations.
+
+    **Symptoms:**
+    - Chrome/Firefox/Edge work fine
+    - Safari shows "Safari can't find the server"
+
+    **Solution:**
+
+    Add current routes to `/etc/hosts` (requires sudo):
+    ```bash
+    sudo portless hosts sync
+    ```
+
+    To auto-sync whenever routes change:
+    ```bash
+    export PORTLESS_SYNC_HOSTS=1
+    sudo portless proxy start
+    ```
+
+    Clean up later:
+    ```bash
+    sudo portless hosts clean
+    ```
+  </Accordion>
+
+  <Accordion title="Certificate trust issues / Browser warnings">
+    When using HTTPS, browsers may show certificate warnings if the local CA isn't trusted.
+
+    **Symptoms:**
+    - "Your connection is not private" warning
+    - NET::ERR_CERT_AUTHORITY_INVALID
+
+    **Solution:**
+
+    Trust the local CA certificate:
+    ```bash
+    sudo portless trust
+    ```
+
+    This adds the portless CA to your system trust store. After this, browsers will trust all portless HTTPS certificates.
+
+    **Supported platforms:**
+    - macOS (no sudo required)
+    - Linux (Debian/Ubuntu, Arch, Fedora/RHEL/CentOS, openSUSE)
+
+    If `portless trust` fails, you skipped sudo during first run. Just run it manually as shown above.
+  </Accordion>
+
+  <Accordion title="508 Loop Detected error">
+    This happens when a dev server proxies requests back through portless without rewriting the Host header.
+
+    **Error message:**
+    ```
+    508 Loop Detected
+    This request has passed through portless 5 times.
+    ```
+
+    **Common cause:**
+    Your frontend dev server (Vite, webpack, etc.) is proxying API requests to another portless app, but isn't rewriting the Host header.
+
+    **Solution for Vite:**
+    ```ts
+    // vite.config.ts
+    server: {
+      proxy: {
+        "/api": {
+          target: "http://api.myapp.localhost:1355",
+          changeOrigin: true,  // Required: rewrites Host header
+          ws: true,
+        },
+      },
+    }
+    ```
+
+    **Solution for webpack-dev-server:**
+    ```js
+    // webpack.config.js
+    devServer: {
+      proxy: [{
+        context: ["/api"],
+        target: "http://api.myapp.localhost:1355",
+        changeOrigin: true,  // Required: rewrites Host header
+      }],
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Proxy not starting automatically">
+    If the proxy doesn't auto-start when you run an app, it may have failed to start in the background.
+
+    **Solutions:**
+
+    1. Check if the proxy is already running:
+       ```bash
+       portless list
+       ```
+
+    2. Start the proxy manually to see any errors:
+       ```bash
+       portless proxy start --foreground
+       ```
+
+    3. Check the proxy log file:
+       ```bash
+       cat ~/.portless/proxy.log
+       # or for privileged ports:
+       cat /tmp/portless/proxy.log
+       ```
+
+    4. If the proxy PID file is stale:
+       ```bash
+       rm ~/.portless/proxy.pid
+       portless proxy start
+       ```
+  </Accordion>
+
+  <Accordion title="App not accessible at expected URL">
+    Your app is running but not accessible at the portless URL.
+
+    **Troubleshooting steps:**
+
+    1. Check if the app registered correctly:
+       ```bash
+       portless list
+       ```
+
+    2. Verify the proxy is running:
+       ```bash
+       lsof -ti tcp:1355
+       ```
+
+    3. Check if your app is listening on the PORT environment variable:
+       - Most frameworks (Next.js, Express, Nuxt) respect `PORT` automatically
+       - Vite, Astro, React Router, Angular, Expo, React Native: portless auto-injects `--port` flag
+
+    4. Try accessing the app directly on its assigned port:
+       ```bash
+       curl http://localhost:4123  # Check port from `portless list`
+       ```
+  </Accordion>
+
+  <Accordion title="ECONNREFUSED / Bad Gateway (502)">
+    The proxy can't connect to your app.
+
+    **Error in browser:**
+    ```
+    502 Bad Gateway
+    The target app is not responding. It may have crashed.
+    ```
+
+    **Common causes:**
+
+    1. **App crashed** - Check your app's console output
+    2. **App not listening on PORT** - Some apps ignore the PORT env var
+    3. **Wrong host** - App must listen on `127.0.0.1` or `0.0.0.0` (not a specific IP)
+
+    **Solutions:**
+
+    1. Check if the app is actually running:
+       ```bash
+       portless list
+       # Try to access the app directly:
+       curl http://localhost:<port-from-list>
+       ```
+
+    2. For frameworks that ignore PORT, portless auto-injects flags. If this isn't working:
+       ```bash
+       portless myapp --app-port 3000 your-command
+       ```
+
+    3. Check your app's startup logs for errors
+  </Accordion>
+
+  <Accordion title="Git worktree prefix not working">
+    Expected a worktree-based subdomain but got the plain name.
+
+    **Symptoms:**
+    - In a git worktree on branch `feature-auth`
+    - Expected: `http://auth.myapp.localhost:1355`
+    - Got: `http://myapp.localhost:1355`
+
+    **Causes:**
+
+    1. **Using explicit name instead of `run`:**
+       ```bash
+       portless myapp next dev  # Explicit name, no worktree prefix
+       ```
+
+       Use `run` to enable worktree detection:
+       ```bash
+       portless run next dev  # Auto-detects worktree, adds prefix
+       ```
+
+    2. **Main worktree (main/master branch):**
+       The main worktree doesn't get a prefix. Only linked worktrees do.
+
+    3. **Not in a git worktree:**
+       Worktree detection only works in git worktrees, not regular branches.
+  </Accordion>
+
+  <Accordion title="npx/pnpm dlx blocked error">
+    **Error message:**
+    ```
+    Error: portless should not be run via npx or pnpm dlx.
+    ```
+
+    **Why:**
+    Running `sudo npx portless` is unsafe because it performs package resolution and downloads as root.
+
+    **Solution:**
+
+    Install portless globally:
+    ```bash
+    npm install -g portless
+    ```
+
+    Then use it directly:
+    ```bash
+    portless proxy start
+    portless run next dev
+    ```
+  </Accordion>
+
+  <Accordion title="PORTLESS=0 not skipping proxy">
+    Setting `PORTLESS=0` should run your command directly without the proxy.
+
+    **Make sure you're using it correctly:**
+
+    ```bash
+    # Correct:
+    PORTLESS=0 pnpm dev
+    PORTLESS=skip npm start
+
+    # Also works with portless commands:
+    PORTLESS=0 portless run next dev  # Runs next dev directly
+    ```
+
+    **Accepted values:**
+    - `PORTLESS=0`
+    - `PORTLESS=skip`
+
+    Any other value will not skip the proxy.
+  </Accordion>
+
+  <Accordion title="State directory permissions issues">
+    Errors about file permissions, especially after running with sudo.
+
+    **Common error:**
+    ```
+    Permission denied: /tmp/portless/routes.json
+    ```
+
+    **Cause:**
+    When you start the proxy with sudo (for ports < 1024), the state directory is owned by root.
+
+    **Solution:**
+
+    Portless automatically handles this by using world-writable permissions for the system state directory. If you still see errors:
+
+    1. Stop the proxy:
+       ```bash
+       sudo portless proxy stop
+       ```
+
+    2. Fix permissions:
+       ```bash
+       sudo chmod 1777 /tmp/portless
+       sudo chmod 666 /tmp/portless/routes.json
+       ```
+
+    3. Restart the proxy:
+       ```bash
+       sudo portless proxy start
+       ```
+  </Accordion>
+
+  <Accordion title="OpenSSL not found error">
+    When using HTTPS, portless requires OpenSSL for certificate generation.
+
+    **Error message:**
+    ```
+    openssl failed: spawn openssl ENOENT
+    Make sure openssl is installed.
+    ```
+
+    **Solution:**
+
+    Install OpenSSL:
+
+    **macOS:**
+    ```bash
+    # OpenSSL ships with macOS by default
+    # If missing, install via Homebrew:
+    brew install openssl
+    ```
+
+    **Debian/Ubuntu:**
+    ```bash
+    sudo apt-get install openssl
+    ```
+
+    **Arch:**
+    ```bash
+    sudo pacman -S openssl
+    ```
+
+    **Fedora/RHEL/CentOS:**
+    ```bash
+    sudo dnf install openssl
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Getting Help
+
+If you're still having issues:
+
+1. Check the [GitHub issues](https://github.com/mattdanielmurphy/portless/issues) for similar problems
+2. Run the proxy in foreground mode to see detailed logs:
+   ```bash
+   portless proxy start --foreground
+   ```
+3. Check the proxy log file:
+   ```bash
+   cat ~/.portless/proxy.log
+   ```
+4. Open a new issue with:
+   - Your OS and Node.js version
+   - The full error message
+   - Steps to reproduce
+
+## Debug Mode
+
+For troubleshooting, you can run the proxy in foreground mode to see all logs:
+
+```bash
+portless proxy stop
+portless proxy start --foreground
+```
+
+This will keep the proxy in the foreground and print all requests and errors to the console.

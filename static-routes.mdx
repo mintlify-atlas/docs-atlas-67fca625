@@ -1,0 +1,575 @@
+---
+title: "Static Routes"
+description: "Register persistent routes for services running outside portless control"
+---
+
+## Overview
+
+Static routes let you register a persistent mapping from a `.localhost` name to a port **without starting a process through portless**. This is useful for:
+
+- Docker containers
+- Services started outside portless
+- Long-running background processes
+- External databases or tools
+- Services that don't accept `PORT` environment variable
+
+Unlike `portless run` or `portless <name> <command>`, static routes don't launch a child process - they just register a route in the proxy.
+
+## Quick Start
+
+```bash
+# Register a static route
+portless alias myapp 3000
+# -> http://myapp.localhost:1355 routes to :3000
+
+# Your service must already be listening on port 3000
+# (or start it separately)
+```
+
+## The alias Command
+
+### Basic Usage
+
+```bash
+portless alias <name> <port>
+```
+
+<Steps>
+  <Step title="Start your service">
+    Start your service on a specific port:
+    ```bash
+    # Example: Start a Node.js server
+    node server.js --port 8080
+    ```
+  </Step>
+
+  <Step title="Register the route">
+    Create a static route:
+    ```bash
+    portless alias api 8080
+    ```
+  </Step>
+
+  <Step title="Access via portless">
+    Access your service via the registered name:
+    ```
+    http://api.localhost:1355
+    ```
+  </Step>
+</Steps>
+
+### Command Reference
+
+```bash
+# Register a static route
+portless alias <name> <port>
+
+# Overwrite an existing route
+portless alias <name> <port> --force
+
+# Remove a static route  
+portless alias --remove <name>
+
+# List all routes (including static ones)
+portless list
+```
+
+## Use Cases
+
+### Docker Containers
+
+Register Docker containers by their published port:
+
+```bash
+# Start PostgreSQL in Docker
+docker run -d -p 5432:5432 \
+  -e POSTGRES_PASSWORD=secret \
+  --name postgres \
+  postgres:16
+
+# Register with portless
+portless alias db 5432
+
+# Access via friendly URL
+psql -h db.localhost -p 1355 -U postgres
+```
+
+<Tip>
+Use Docker port mapping (`-p host:container`) to publish the container's port to localhost, then register that port with portless.
+</Tip>
+
+### Multiple Docker Services
+
+```bash
+# Start multiple containers
+docker run -d -p 5432:5432 --name postgres postgres:16
+docker run -d -p 6379:6379 --name redis redis:7
+docker run -d -p 9200:9200 --name elasticsearch elasticsearch:8.11.0
+
+# Register all with portless
+portless alias db 5432
+portless alias cache 6379  
+portless alias search 9200
+
+# Access:
+# http://db.localhost:1355
+# http://cache.localhost:1355
+# http://search.localhost:1355
+```
+
+### Existing Development Server
+
+If you have a server already running that doesn't use the `PORT` environment variable:
+
+```bash
+# Server is hardcoded to listen on :4000
+ruby server.rb &
+
+# Register it with portless
+portless alias rails-app 4000
+
+# Access at http://rails-app.localhost:1355
+```
+
+### Background Services
+
+Register long-running services that you start manually:
+
+```bash
+# Start a background webhook receiver
+npx localtunnel --port 3001 &
+
+# Register it
+portless alias webhooks 3001
+
+# Access at http://webhooks.localhost:1355
+```
+
+### Third-Party Tools
+
+Register dev tools with UIs:
+
+<CodeGroup>
+```bash Mailhog (email testing)
+# Start Mailhog
+mailhog &  # Listens on :8025
+
+# Register with portless
+portless alias mail 8025
+
+# Access UI at http://mail.localhost:1355
+```
+
+```bash Prisma Studio
+# Start Prisma Studio
+npx prisma studio --port 5555 &
+
+# Register with portless
+portless alias prisma 5555
+
+# Access at http://prisma.localhost:1355  
+```
+
+```bash MinIO (S3-compatible storage)
+# Start MinIO
+minio server /data --console-address :9001 &
+
+# Register console
+portless alias minio 9001
+
+# Access at http://minio.localhost:1355
+```
+</CodeGroup>
+
+## Docker Compose Integration
+
+Use static routes with Docker Compose:
+
+<CodeGroup>
+```yaml docker-compose.yml
+services:
+  postgres:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: secret
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  mailhog:
+    image: mailhog/mailhog
+    ports:
+      - "8025:8025"  # Web UI
+      - "1025:1025"  # SMTP
+```
+
+```bash setup.sh
+#!/bin/bash
+# Start services
+docker compose up -d
+
+# Register with portless
+portless alias db 5432
+portless alias cache 6379
+portless alias mail 8025
+
+echo "Services available at:"
+echo "  http://db.localhost:1355"
+echo "  http://cache.localhost:1355"
+echo "  http://mail.localhost:1355"
+```
+</CodeGroup>
+
+## Overwriting Routes
+
+### Force Flag
+
+By default, `portless alias` fails if a route is already registered:
+
+```bash
+# First registration succeeds
+portless alias api 3000
+
+# Second fails
+portless alias api 4000
+# Error: "api" is already registered by a running process (PID 12345).
+# Use --force to override.
+```
+
+Use `--force` to overwrite:
+
+```bash
+portless alias api 4000 --force
+# Overwrites the existing route
+```
+
+<Warning>
+Using `--force` will disconnect any active connections to the old route. The new route takes effect immediately.
+</Warning>
+
+### Conflict Behavior
+
+When a route conflict occurs, portless checks if the owning process is still alive:
+
+1. **Process is dead** - Route is overwritten automatically (no `--force` needed)
+2. **Process is alive** - Requires `--force` to overwrite
+3. **Static route (PID 0)** - Requires `--force` to overwrite
+
+This prevents accidental overwrites while cleaning up stale routes automatically.
+
+## Removing Routes
+
+```bash
+# Remove a static route
+portless alias --remove api
+
+# Verify removal
+portless list
+```
+
+<Note>
+Removing a route doesn't stop the underlying service - it only removes the proxy mapping. The service continues running on its original port.
+</Note>
+
+## Combining with Dynamic Routes
+
+You can mix static routes with dynamic `portless run` routes:
+
+```bash
+# Static route for database
+portless alias db 5432
+
+# Dynamic route for API (portless manages lifecycle)
+portless api node server.js
+
+# Dynamic route for frontend
+portless web next dev
+
+# All accessible via portless:
+# http://db.localhost:1355    -> :5432 (static)
+# http://api.localhost:1355   -> :4123 (dynamic, random port)
+# http://web.localhost:1355   -> :4567 (dynamic, random port)
+```
+
+## State Persistence
+
+Static routes are stored in the routes file alongside dynamic routes:
+
+```json ~/.portless/routes.json
+[
+  {
+    "hostname": "db",
+    "port": 5432,
+    "pid": 0
+  },
+  {
+    "hostname": "api",  
+    "port": 4123,
+    "pid": 12345
+  }
+]
+```
+
+- **Static routes** have `"pid": 0`
+- **Dynamic routes** have a real PID
+
+When the proxy restarts, static routes persist. Dynamic routes are cleaned up if the process is no longer running.
+
+### State Directory
+
+Routes are stored based on proxy port:
+- **Port >= 1024**: `~/.portless/routes.json`
+- **Port < 1024** (sudo): `/tmp/portless/routes.json`
+
+Override with:
+```bash
+export PORTLESS_STATE_DIR=/custom/path
+```
+
+## Wildcard Routing with Static Routes
+
+Static routes support [wildcard routing](/wildcard-routing) just like dynamic routes:
+
+```bash
+# Register a static route
+portless alias app 8080
+
+# All these work automatically:
+# http://app.localhost:1355          -> :8080
+# http://tenant1.app.localhost:1355  -> :8080
+# http://tenant2.app.localhost:1355  -> :8080
+```
+
+Your service receives the full `Host` header and can route internally based on the subdomain.
+
+## Real-World Workflows
+
+### Microservices Development
+
+<CodeGroup>
+```bash start-services.sh
+#!/bin/bash
+# Start all services in background
+cd services/auth && npm start -- --port 3001 &
+cd services/users && npm start -- --port 3002 &
+cd services/payments && npm start -- --port 3003 &
+
+# Register with portless
+portless alias auth 3001
+portless alias users 3002
+portless alias payments 3003
+
+# Start the frontend through portless (dynamic port)
+portless frontend npm start
+
+echo "Services:"
+echo "  http://auth.localhost:1355"
+echo "  http://users.localhost:1355"
+echo "  http://payments.localhost:1355"
+echo "  http://frontend.localhost:1355"
+```
+
+```bash stop-services.sh
+#!/bin/bash
+# Kill background services
+pkill -f "npm start -- --port 300"
+
+# Remove static routes
+portless alias --remove auth
+portless alias --remove users  
+portless alias --remove payments
+```
+</CodeGroup>
+
+### Full-Stack with Docker
+
+```bash
+# docker-compose.yml starts databases
+docker compose up -d
+
+# Register databases
+portless alias postgres 5432
+portless alias redis 6379
+
+# Run application services through portless
+portless api npm run dev:api
+portless web npm run dev:web
+
+# Access:
+# http://postgres.localhost:1355  (Docker)
+# http://redis.localhost:1355     (Docker)
+# http://api.localhost:1355       (portless-managed)
+# http://web.localhost:1355       (portless-managed)
+```
+
+### Monorepo Development
+
+<CodeGroup>
+```json package.json
+{
+  "scripts": {
+    "dev:api": "portless alias api 3001 && npm run start:api",
+    "dev:web": "portless run next dev",
+    "dev:admin": "portless run vite",
+    "dev:all": "pnpm -r --parallel run dev"
+  }
+}
+```
+
+```bash Terminal
+# Start everything
+pnpm dev:all
+
+# Access:
+# http://api.localhost:1355   (static route to :3001)
+# http://web.localhost:1355   (dynamic, auto-assigned port)
+# http://admin.localhost:1355 (dynamic, auto-assigned port)
+```
+</CodeGroup>
+
+## Listing Routes
+
+View all routes (both static and dynamic):
+
+```bash
+portless list
+```
+
+Example output:
+```
+Active routes:
+  db.localhost:1355 -> :5432 (static)
+  cache.localhost:1355-> :6379 (static)
+  api.localhost:1355 -> :4123 (PID 12345)
+  web.localhost:1355 -> :4567 (PID 12346)
+```
+
+Static routes are marked with `(static)` or `(PID 0)`. Dynamic routes show the managing process PID.
+
+## Troubleshooting
+
+### Route Registered But Connection Refused
+
+The route is registered, but the service isn't running on the target port:
+
+```bash
+# Check if something is listening on the port
+lsof -i :3000
+
+# Or use netstat
+netstat -an | grep 3000
+```
+
+Make sure your service is running before accessing the route.
+
+### Port Already in Use
+
+If the port you want to use is taken:
+
+```bash
+# Find what's using the port
+lsof -i :3000
+
+# Kill the process
+kill <PID>
+
+# Or use a different port
+portless alias api 3001
+```
+
+### Route Conflict
+
+If you see "already registered" errors:
+
+```bash
+# Check active routes
+portless list
+
+# Remove the conflicting route
+portless alias --remove api
+
+# Or use --force to overwrite
+portless alias api 4000 --force
+```
+
+### Service Not Receiving Requests
+
+Make sure your service is:
+1. **Listening on the correct port**
+2. **Binding to 127.0.0.1 or 0.0.0.0** (not just localhost in some configurations)
+3. **Not behind another proxy** that might interfere
+
+Test directly:
+```bash
+curl http://localhost:3000/health
+```
+
+If that works, the portless route should work too.
+
+## Limitations
+
+### No Process Management
+
+Static routes don't manage the lifecycle of the target service. You're responsible for:
+- Starting the service
+- Stopping the service
+- Restarting on crashes
+- Ensuring it's listening on the correct port
+
+For managed processes, use `portless run` or `portless <name> <command>` instead.
+
+### No Automatic Port Assignment
+
+Unlike dynamic routes, static routes require you to specify the port manually. There's no auto-assignment.
+
+### Stale Routes
+
+If you register a static route but later stop the service without removing the route, the route remains registered. Requests will fail with "connection refused".
+
+Clean up manually:
+```bash
+portless alias --remove <name>
+```
+
+## Comparison: Static vs Dynamic Routes
+
+| Feature | Static (`alias`) | Dynamic (`run` / `<name>`) |
+|---------|------------------|----------------------------|
+| **Process management** | No | Yes (portless starts/stops) |
+| **Port assignment** | Manual | Automatic (4000-4999) |
+| **Environment variables** | None injected | `PORT`, `HOST`, `PORTLESS_URL` |
+| **Persistence** | Survives restarts | Cleaned up when process exits |
+| **Use case** | External services, Docker | Dev servers, apps |
+| **Auto-cleanup** | Manual removal required | Automatic on process exit |
+
+## Reserved Names
+
+These names are reserved for portless subcommands and cannot be used directly:
+- `run`
+- `alias`
+- `hosts`
+- `list`
+- `trust`
+- `proxy`
+
+Workaround:
+```bash
+# Instead of:
+portless alias run 3000  # Error: "run" is reserved
+
+# Use --name flag:
+portless --name run alias run 3000
+```
+
+Or choose a different name:
+```bash
+portless alias runner 3000
+```
+
+<Tip>
+For most use cases, avoid reserved names. If you must use one, use the `--name` flag to explicitly force it.
+</Tip>

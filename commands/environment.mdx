@@ -1,0 +1,312 @@
+---
+title: "Environment Variables"
+description: "Configuration via environment variables"
+---
+
+## Overview
+
+Portless can be configured using environment variables. These are useful for setting defaults in your shell config (`.bashrc`, `.zshrc`) or for per-project configuration.
+
+## Configuration Variables
+
+These variables configure Portless behavior:
+
+### `PORTLESS_PORT`
+
+Override the default proxy port (1355).
+
+```bash
+export PORTLESS_PORT=8080
+portless proxy start  # Starts on port 8080
+```
+
+**Valid values**: 1-65535  
+**Default**: 1355  
+**Overridden by**: `--port` / `-p` flag
+
+### `PORTLESS_APP_PORT`
+
+Use a fixed port for apps instead of automatic assignment (4000-4999 range).
+
+```bash
+export PORTLESS_APP_PORT=3000
+portless run next dev  # App uses port 3000
+```
+
+**Valid values**: 1-65535  
+**Default**: Auto-assigned in 4000-4999 range  
+**Overridden by**: `--app-port` flag
+
+### `PORTLESS_HTTPS`
+
+Always enable HTTPS when starting the proxy.
+
+```bash
+export PORTLESS_HTTPS=1
+portless proxy start  # Starts with HTTPS automatically
+```
+
+**Valid values**: `1`, `true`  
+**Default**: Not set (HTTP)  
+**Overridden by**: `--no-tls` flag
+
+### `PORTLESS_SYNC_HOSTS`
+
+Automatically sync `/etc/hosts` whenever routes change. Requires proxy to be started with sudo.
+
+```bash
+export PORTLESS_SYNC_HOSTS=1
+sudo portless proxy start  # Auto-syncs /etc/hosts on route changes
+```
+
+**Valid values**: `1`  
+**Default**: Not set (manual sync only)  
+**Requires**: Proxy started with sudo
+
+### `PORTLESS_STATE_DIR`
+
+Override the state directory location.
+
+```bash
+export PORTLESS_STATE_DIR=/custom/path
+portless proxy start  # Uses /custom/path for state
+```
+
+**Default**:
+- Port < 1024 (privileged): `/tmp/portless`
+- Port >= 1024 (unprivileged): `~/.portless`
+
+### `PORTLESS`
+
+Skip the proxy and run commands directly.
+
+```bash
+export PORTLESS=0
+portless run next dev  # Runs "next dev" directly, no proxy
+
+# Also accepts:
+export PORTLESS=skip
+```
+
+**Valid values**: `0`, `skip`  
+**Default**: Not set (uses proxy)
+
+## Injected Variables
+
+These variables are injected into your app's process by Portless:
+
+### `PORT`
+
+The port your app should listen on.
+
+```bash
+# Automatically set when running your app
+portless run next dev
+# PORT=4123 (example random port)
+```
+
+Most frameworks (Next.js, Express, Nuxt, etc.) respect this automatically.
+
+### `HOST`
+
+The host your app should bind to. Always set to `127.0.0.1`.
+
+```bash
+portless run next dev
+# HOST=127.0.0.1
+```
+
+Prevents frameworks from binding to IPv6 `::1`.
+
+### `PORTLESS_URL`
+
+The public URL of your app.
+
+```bash
+portless myapp next dev
+# PORTLESS_URL=http://myapp.localhost:1355
+```
+
+Use this to:
+- Generate absolute URLs in your app
+- Configure OAuth redirect URIs
+- Reference your app from other services
+
+```javascript
+// In your app code
+const publicUrl = process.env.PORTLESS_URL || 'http://localhost:3000';
+console.log(`App running at ${publicUrl}`);
+```
+
+### `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS`
+
+Set to `.localhost` for Vite compatibility.
+
+```bash
+portless run vite dev
+# __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=.localhost
+```
+
+Prevents Vite from rejecting requests with `.localhost` host headers.
+
+## Examples
+
+### Permanent HTTPS Setup
+
+Add to `.bashrc` or `.zshrc`:
+
+```bash
+export PORTLESS_HTTPS=1
+```
+
+Now every time you start the proxy, it uses HTTPS:
+
+```bash
+portless proxy start  # Uses HTTPS automatically
+```
+
+### Custom Port for Development
+
+```bash
+export PORTLESS_PORT=8080
+portless run next dev
+# -> http://myapp.localhost:8080
+```
+
+### Auto-Sync Hosts for Safari
+
+Add to shell config:
+
+```bash
+export PORTLESS_SYNC_HOSTS=1
+```
+
+Start proxy with sudo:
+
+```bash
+sudo portless proxy start
+```
+
+Now `/etc/hosts` updates automatically when routes change.
+
+### Fixed App Port
+
+```bash
+export PORTLESS_APP_PORT=3000
+portless run next dev  # Always uses port 3000
+```
+
+### Custom State Directory
+
+```bash
+export PORTLESS_STATE_DIR=~/my-project/.portless
+portless proxy start
+# State stored in ~/my-project/.portless/
+```
+
+### Skip Proxy Temporarily
+
+```bash
+# One-off skip
+PORTLESS=0 pnpm dev
+
+# Skip for session
+export PORTLESS=skip
+pnpm dev  # Runs without proxy
+unset PORTLESS  # Re-enable
+```
+
+### Use in Scripts
+
+**package.json**:
+```json
+{
+  "scripts": {
+    "dev": "portless run next dev",
+    "dev:direct": "PORTLESS=0 next dev"
+  }
+}
+```
+
+**Makefile**:
+```makefile
+dev:
+	export PORTLESS_HTTPS=1 && portless run next dev
+
+dev-without-proxy:
+	export PORTLESS=skip && portless run next dev
+```
+
+## Environment Priority
+
+When multiple configuration sources exist, priority is:
+
+1. **CLI flags** (highest priority)
+2. **Environment variables**
+3. **Defaults** (lowest priority)
+
+Examples:
+
+```bash
+# Port from environment
+export PORTLESS_PORT=8080
+portless proxy start
+# Uses port 8080
+
+# Flag overrides environment
+export PORTLESS_PORT=8080
+portless proxy start -p 9000
+# Uses port 9000
+
+# HTTPS from environment
+export PORTLESS_HTTPS=1
+portless proxy start
+# Uses HTTPS
+
+# --no-tls overrides HTTPS environment
+export PORTLESS_HTTPS=1
+portless proxy start --no-tls
+# Uses HTTP (HTTPS disabled)
+```
+
+## Validation
+
+### Invalid Port
+
+```bash
+export PORTLESS_PORT=abc
+portless proxy start
+# Ignores invalid value, uses default (1355)
+
+export PORTLESS_PORT=99999
+portless proxy start
+# Ignores out-of-range value, uses default (1355)
+```
+
+### Invalid App Port
+
+```bash
+export PORTLESS_APP_PORT=abc
+portless run next dev
+# Error: Invalid PORTLESS_APP_PORT="abc". Must be 1-65535.
+```
+
+## Debugging
+
+To see which port Portless is using:
+
+```bash
+portless list
+# Shows active routes with ports
+
+# Check state files
+cat ~/.portless/proxy.port
+# or
+cat /tmp/portless/proxy.port
+```
+
+## See Also
+
+- [CLI Flags](/commands/flags) - Override environment variables with flags
+- [portless proxy](/commands/proxy) - Proxy server configuration
+- [portless run](/commands/run) - Run apps with environment configuration

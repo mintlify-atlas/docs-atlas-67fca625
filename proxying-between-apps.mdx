@@ -1,0 +1,144 @@
+---
+title: Proxying Between Apps
+description: How to proxy requests between portless apps without triggering loop detection
+---
+
+When your frontend dev server proxies API requests to another portless app, you need to configure the proxy to rewrite the `Host` header. Without this, portless will detect a routing loop and respond with a `508 Loop Detected` error.
+
+## The Problem
+
+When a frontend dev server (like Vite or webpack) proxies a request without rewriting headers, it forwards the **original** `Host` header from the browser. For example:
+
+1. Browser sends request to `http://frontend.localhost:1355/api/users`
+2. Frontend dev server proxies to `http://api.localhost:1355/api/users`
+3. **Without `changeOrigin`**: The `Host` header remains `frontend.localhost`
+4. Portless routes the request back to the frontend based on the `Host` header
+5. The frontend proxies it again, creating an infinite loop
+
+Portless tracks how many times a request has passed through the proxy using the `X-Portless-Hops` header. After 5 hops, it rejects the request with a `508 Loop Detected` error.
+
+## The Solution: `changeOrigin`
+
+Set `changeOrigin: true` in your proxy configuration to rewrite the `Host` header to match the target:
+
+### Vite
+
+In `vite.config.ts` or `vite.config.js`:
+
+```ts
+export default {
+  server: {
+    proxy: {
+      "/api": {
+        target: "http://api.myapp.localhost:1355",
+        changeOrigin: true,  // Required: rewrites Host header to match target
+        ws: true,            // Enable WebSocket proxying
+      },
+    },
+  },
+}
+```
+
+### webpack-dev-server
+
+In `webpack.config.js`:
+
+```js
+module.exports = {
+  devServer: {
+    proxy: [{
+      context: ["/api"],
+      target: "http://api.myapp.localhost:1355",
+      changeOrigin: true,  // Required: rewrites Host header to match target
+    }],
+  },
+}
+```
+
+### Next.js
+
+In `next.config.js`:
+
+```js
+module.exports = {
+  async rewrites() {
+    return [
+      {
+        source: "/api/:path*",
+        destination: "http://api.myapp.localhost:1355/api/:path*",
+      },
+    ];
+  },
+};
+```
+
+Next.js rewrites handle the `Host` header correctly by default.
+
+## What `changeOrigin` Does
+
+When `changeOrigin: true` is set:
+
+1. Browser sends request with `Host: frontend.localhost`
+2. Frontend dev server changes the `Host` header to `api.localhost` (matching the target)
+3. Portless receives the request with `Host: api.localhost`
+4. Portless correctly routes to the API backend
+5. No loop occurs
+
+The option also sets `X-Forwarded-Host` to preserve the original host for debugging.
+
+## Loop Detection Details
+
+Portless uses the `X-Portless-Hops` header to count how many times a request has passed through the proxy:
+
+- **Maximum hops**: 5 (allows multi-tier setups while catching loops quickly)
+- **Normal usage**: 1-2 hops (browser → proxy → app, or frontend → proxy → API → proxy → backend)
+- **Error response**: `508 Loop Detected` with an HTML page explaining the fix
+
+<Warning>
+If you see a `508 Loop Detected` error, check your proxy configuration. The most common cause is missing `changeOrigin: true`.
+</Warning>
+
+## Wildcard Subdomains and Proxying
+
+When using wildcard subdomains (e.g., `tenant1.myapp.localhost`, `tenant2.myapp.localhost`), the same `changeOrigin` requirement applies. The proxy must rewrite the `Host` header to match the registered route:
+
+```ts
+// Frontend runs at: http://tenant1.myapp.localhost:1355
+// API runs at:      http://myapp.localhost:1355
+
+server: {
+  proxy: {
+    "/api": {
+      target: "http://myapp.localhost:1355",
+      changeOrigin: true,  // Rewrites Host from tenant1.myapp.localhost to myapp.localhost
+    },
+  },
+}
+```
+
+## Debugging Proxy Issues
+
+If you're experiencing routing problems:
+
+1. **Check the error page**: Portless shows a detailed `508` error with the exact configuration needed
+2. **Inspect headers**: Use browser DevTools to verify the `Host` header in proxied requests
+3. **Check registered routes**: Run `portless list` to see which apps are registered
+4. **Test direct access**: Visit the backend URL directly to verify it's running
+
+## WebSocket Proxying
+
+WebSocket upgrades also require `changeOrigin` to avoid loop detection:
+
+```ts
+server: {
+  proxy: {
+    "/socket": {
+      target: "http://api.myapp.localhost:1355",
+      changeOrigin: true,
+      ws: true,  // Enable WebSocket proxying
+    },
+  },
+}
+```
+
+Portless applies the same hop limit to WebSocket upgrades and responds with a `508 Loop Detected` message if the limit is exceeded.

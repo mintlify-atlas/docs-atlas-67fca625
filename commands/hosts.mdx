@@ -1,0 +1,208 @@
+---
+title: "portless hosts"
+description: "Manage /etc/hosts entries for Safari"
+---
+
+## Overview
+
+The `hosts` command manages `/etc/hosts` entries for `.localhost` subdomains. This is needed for Safari, which relies on the system DNS resolver and may not handle `.localhost` subdomains automatically.
+
+## Why This is Needed
+
+- **Chrome, Firefox, Edge**: `.localhost` subdomains auto-resolve to `127.0.0.1` (no configuration needed)
+- **Safari**: Relies on system DNS, which may not handle `.localhost` on all configurations
+
+If Safari can't resolve your `.localhost` URL, use this command to add entries to `/etc/hosts`.
+
+## Syntax
+
+```bash
+# Add current routes to /etc/hosts
+sudo portless hosts sync
+
+# Remove portless entries from /etc/hosts
+sudo portless hosts clean
+
+# Show help
+portless hosts --help
+```
+
+## Subcommands
+
+### `sync`
+
+Add all currently registered routes to `/etc/hosts`.
+
+```bash
+sudo portless hosts sync
+```
+
+Output:
+```
+Synced 3 hostname(s) to /etc/hosts:
+  127.0.0.1 myapp.localhost
+  127.0.0.1 api.myapp.localhost
+  127.0.0.1 postgres.localhost
+```
+
+Requires sudo because `/etc/hosts` is a system file.
+
+### `clean`
+
+Remove all portless-managed entries from `/etc/hosts`.
+
+```bash
+sudo portless hosts clean
+```
+
+Output:
+```
+Removed portless entries from /etc/hosts.
+```
+
+## Examples
+
+### Safari Not Resolving URLs
+
+If Safari shows "can't find server" for `.localhost` URLs:
+
+```bash
+# Start your apps
+portless myapp next dev
+portless api.myapp pnpm start
+
+# Sync to /etc/hosts
+sudo portless hosts sync
+
+# Now Safari can resolve:
+# - http://myapp.localhost:1355
+# - http://api.myapp.localhost:1355
+```
+
+### Clean Up After Development
+
+When you're done with your project:
+
+```bash
+# Remove all portless entries
+sudo portless hosts clean
+```
+
+### Auto-Sync on Route Changes
+
+To automatically update `/etc/hosts` whenever routes change:
+
+```bash
+# Set environment variable
+export PORTLESS_SYNC_HOSTS=1
+
+# Start proxy with sudo (required for /etc/hosts writes)
+sudo portless proxy start
+
+# Now /etc/hosts is updated automatically when you add/remove routes
+```
+
+Add to `.bashrc` or `.zshrc` to make it permanent:
+
+```bash
+echo 'export PORTLESS_SYNC_HOSTS=1' >> ~/.bashrc
+```
+
+## How It Works
+
+### Sync
+
+1. Reads all routes from the proxy state
+2. Generates `/etc/hosts` entries (e.g. `127.0.0.1 myapp.localhost`)
+3. Adds entries between marker comments:
+   ```
+   # BEGIN portless
+   127.0.0.1 myapp.localhost
+   127.0.0.1 api.myapp.localhost
+   # END portless
+   ```
+4. Preserves other entries in `/etc/hosts`
+
+### Clean
+
+1. Reads `/etc/hosts`
+2. Removes lines between `# BEGIN portless` and `# END portless`
+3. Removes marker comments
+4. Preserves all other entries
+
+## Requirements
+
+- **sudo**: Required on all platforms
+- **Writable /etc/hosts**: Standard on macOS and Linux
+
+## Errors
+
+### Permission Denied
+
+```bash
+portless hosts sync
+```
+
+Output:
+```
+Failed to update /etc/hosts (requires sudo).
+  sudo portless hosts sync
+```
+
+Solution: Run with sudo.
+
+### No Routes to Sync
+
+```bash
+sudo portless hosts sync
+```
+
+Output:
+```
+No active routes to sync.
+```
+
+Solution: Start some apps first:
+```bash
+portless myapp next dev
+sudo portless hosts sync
+```
+
+### Auto-Sync Without Sudo Proxy
+
+If you set `PORTLESS_SYNC_HOSTS=1` but start the proxy without sudo:
+
+```bash
+export PORTLESS_SYNC_HOSTS=1
+portless proxy start  # no sudo
+```
+
+The proxy starts but can't update `/etc/hosts`. You'll need to run `sudo portless hosts sync` manually.
+
+## Auto-Sync Environment Variable
+
+Set `PORTLESS_SYNC_HOSTS=1` to enable automatic `/etc/hosts` updates:
+
+```bash
+export PORTLESS_SYNC_HOSTS=1
+sudo portless proxy start
+```
+
+Now:
+- Adding a route (`portless myapp next dev`) updates `/etc/hosts`
+- Removing a route (process exits) updates `/etc/hosts`
+- Proxy watches the routes file and syncs on changes
+
+## Related Commands
+
+- [`portless list`](/commands/list) - See which routes will be synced
+- [`portless proxy start`](/commands/proxy) - Start the proxy
+
+## Exit Codes
+
+- **0** - Success
+- **1** - Error (permission denied, invalid subcommand, no routes)
+
+## See Also
+
+- [Environment Variables](/commands/environment) - Full list including `PORTLESS_SYNC_HOSTS`

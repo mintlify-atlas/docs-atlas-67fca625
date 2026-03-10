@@ -1,0 +1,323 @@
+---
+title: Why Portless?
+description: Understand the problems Portless solves and when to use it
+---
+
+# Why Portless?
+
+Local development with port numbers is fragile and error-prone. Portless fixes this by replacing numeric ports with stable, named URLs.
+
+## The Problem with Port Numbers
+
+If you've ever run multiple dev servers locally, you've hit these issues:
+
+### Port Conflicts
+
+Two projects default to the same port and you get `EADDRINUSE`:
+
+```bash
+Error: listen EADDRINUSE: address already in use :::3000
+```
+
+Now you have to manually specify a different port, update your config, and remember which port you used.
+
+### Memorizing Ports
+
+You have 5 tabs open:
+- `localhost:3000` - is this the frontend or the API?
+- `localhost:8080` - was this the admin panel?
+- `localhost:4000` - wait, what app is this?
+
+You constantly switch to the wrong tab and have to check the terminal to remember which port is which.
+
+### Refreshing Shows the Wrong App
+
+You stop one server, start another on the same port, and your open tab now shows something completely different. You refresh expecting to see your API docs, but instead you get a React app.
+
+This is especially confusing when you have multiple projects using the same framework and port.
+
+### Monorepo Multiplier
+
+Every problem above scales with each service in the repo. A typical monorepo might have:
+- Frontend on port 3000
+- API on port 8080
+- Admin panel on port 3001
+- Docs on port 3002
+- Background worker on port 9000
+
+Managing this manually is tedious and error-prone.
+
+### Agents Test the Wrong Port
+
+AI coding agents often guess or hardcode the wrong port, especially in monorepos:
+
+```javascript
+// Agent writes this:
+fetch('http://localhost:3000/api/users')
+
+// But your API is actually on port 8080
+```
+
+With Portless, agents can rely on stable URLs:
+
+```javascript
+// Agent writes this:
+fetch('http://api.myapp.localhost:1355/users')
+
+// Works every time
+```
+
+### Cookie and Storage Clashes
+
+Cookies set on `localhost` bleed across apps on different ports:
+
+```javascript
+// App on localhost:3000 sets a cookie
+document.cookie = 'userId=123; domain=localhost';
+
+// App on localhost:8080 sees it too!
+console.log(document.cookie); // userId=123
+```
+
+`localStorage` is even worse - it's keyed by origin, so when you switch apps on the same port, you lose all your data.
+
+With Portless, each app has its own domain:
+- `myapp.localhost:1355` has its own cookies and localStorage
+- `api.localhost:1355` has its own cookies and localStorage
+
+No more cross-contamination.
+
+### Hardcoded Ports in Config
+
+CORS allowlists, OAuth redirect URIs, and `.env` files all break when ports change:
+
+```bash .env
+API_URL=http://localhost:8080
+FRONTEND_URL=http://localhost:3000
+```
+
+If you start your API on a different port, everything breaks. With Portless, these URLs stay stable:
+
+```bash .env
+API_URL=http://api.myapp.localhost:1355
+FRONTEND_URL=http://myapp.localhost:1355
+```
+
+### Sharing URLs with Teammates
+
+"What port is that on?" becomes a Slack question. With Portless, you just share:
+
+```
+http://api.myapp.localhost:1355/docs
+```
+
+Everyone knows exactly what you're talking about.
+
+### Browser History is Useless
+
+Your browser history for `localhost:3000` is a jumble of unrelated projects:
+
+```
+localhost:3000/dashboard  (was this the blog or the e-commerce site?)
+localhost:3000/admin      (which project?)
+localhost:3000/api/docs   (no idea)
+```
+
+With Portless, your history is organized by project:
+
+```
+myapp.localhost:1355/dashboard
+shop.localhost:1355/admin
+api.myapp.localhost:1355/docs
+```
+
+Crystal clear.
+
+## The Portless Solution
+
+Portless fixes all of these problems by giving each dev server a stable, named `.localhost` URL:
+
+<CardGroup cols={2}>
+  <Card title="No Port Conflicts" icon="ban">
+    Every app gets a unique name. `portless myapp next dev` and `portless shop next dev` never conflict.
+  </Card>
+  <Card title="Stable URLs" icon="anchor">
+    `http://myapp.localhost:1355` never changes. No more wondering which port is which.
+  </Card>
+  <Card title="Isolated Storage" icon="box">
+    Each domain has its own cookies and localStorage. No more cross-contamination.
+  </Card>
+  <Card title="Shareable" icon="share">
+    Share `http://api.myapp.localhost:1355/docs` with your team. Everyone knows what it is.
+  </Card>
+  <Card title="Agent-Friendly" icon="robot">
+    AI agents can rely on stable URLs instead of guessing ports.
+  </Card>
+  <Card title="Clean History" icon="clock-rotate-left">
+    Browser history is organized by project name, not a jumble of `localhost:3000`.
+  </Card>
+</CardGroup>
+
+## Benefits of Named URLs
+
+### For Humans
+
+- **Readable**: `api.myapp.localhost:1355` tells you exactly what it is
+- **Memorable**: No need to remember which port is which
+- **Organized**: Each project has its own namespace
+- **Shareable**: Send a URL to a teammate without explaining the port
+
+### For Agents
+
+- **Predictable**: Agents can rely on `http://api.myapp.localhost:1355` always being the API
+- **No Guessing**: No more hardcoding `localhost:3000` and hoping it's right
+- **Testable**: Agents can run tests against stable URLs without manual intervention
+
+### For Teams
+
+- **Consistent**: Everyone uses the same URL for the same service
+- **Documented**: URLs in docs stay valid across machines
+- **Onboarding**: New team members don't need a port reference sheet
+
+## Real-World Use Cases
+
+### Full-Stack Monorepo
+
+You have a Next.js frontend, Express API, and background worker:
+
+```bash
+# Terminal 1
+portless myapp next dev
+# -> http://myapp.localhost:1355
+
+# Terminal 2
+portless api.myapp node server.js
+# -> http://api.myapp.localhost:1355
+
+# Terminal 3
+portless worker.myapp node worker.js
+# -> http://worker.myapp.localhost:1355
+```
+
+No port conflicts, no confusion, no memorization.
+
+### Multi-Tenant App Development
+
+You're building a multi-tenant SaaS app and want to test tenant isolation:
+
+```bash
+portless myapp next dev
+```
+
+Now you can test different tenants:
+
+```
+http://tenant1.myapp.localhost:1355
+http://tenant2.myapp.localhost:1355
+http://admin.myapp.localhost:1355
+```
+
+All routing to the same app, but with different subdomains for tenant detection.
+
+### Git Worktree Workflows
+
+You use git worktrees to work on multiple features simultaneously:
+
+```bash
+# Main branch
+cd ~/projects/myapp-main
+portless run next dev
+# -> http://myapp.localhost:1355
+
+# Feature branch
+cd ~/projects/myapp-feature
+portless run next dev
+# -> http://feature.myapp.localhost:1355
+```
+
+Each worktree gets its own URL automatically. No manual name overrides, no port conflicts.
+
+### Microservices Development
+
+You have 10 microservices running locally:
+
+```bash
+portless auth node auth-service.js
+portless users node users-service.js
+portless payments node payments-service.js
+portless notifications node notifications-service.js
+# ... and 6 more
+```
+
+Every service has a clear, stable URL. No port juggling, no confusion.
+
+### API Client Testing
+
+You're building an API client library and need to test against a local API:
+
+```typescript
+const client = new APIClient({
+  baseURL: 'http://api.myapp.localhost:1355'
+});
+
+await client.users.list();
+```
+
+The URL never changes, even if you restart the API on a different port.
+
+### OAuth and Webhooks
+
+You're testing OAuth or webhook integrations:
+
+```bash
+portless myapp next dev
+```
+
+Your OAuth redirect URI is always:
+
+```
+http://myapp.localhost:1355/auth/callback
+```
+
+No more updating your OAuth provider config every time the port changes.
+
+<Tip>
+  For external webhooks, combine Portless with a tunnel tool like ngrok: `ngrok http myapp.localhost:1355`
+</Tip>
+
+## When to Use Portless
+
+Portless is ideal if you:
+
+- Run multiple dev servers locally (frontend + API, monorepo, microservices)
+- Work on multiple projects simultaneously
+- Use git worktrees for parallel feature development
+- Hit port conflicts regularly
+- Want stable URLs for AI agents to use
+- Need consistent OAuth/webhook URLs
+- Work in a team and want shareable URLs
+- Value readable, memorable URLs over numeric ports
+
+## When NOT to Use Portless
+
+Portless might not be necessary if you:
+
+- Only ever run one dev server at a time
+- Don't mind memorizing port numbers
+- Never hit port conflicts
+- Work alone and don't share URLs
+
+<Note>
+  Portless is designed for local development only. It's not intended for production use.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install Portless and run your first app in under 2 minutes
+  </Card>
+  <Card title="HTTPS & HTTP/2" icon="lock" href="/https">
+    Enable HTTPS with auto-generated certificates for faster dev servers
+  </Card>
+</CardGroup>

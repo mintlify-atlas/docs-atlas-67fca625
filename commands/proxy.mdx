@@ -1,0 +1,341 @@
+---
+title: "portless proxy"
+description: "Manage the proxy server"
+---
+
+## Overview
+
+The `proxy` command controls the Portless proxy server lifecycle. The proxy runs as a background daemon and routes requests from `.localhost` URLs to your local dev servers.
+
+## Syntax
+
+```bash
+# Start the proxy
+portless proxy start [options]
+
+# Stop the proxy
+portless proxy stop
+
+# Show help
+portless proxy --help
+```
+
+## Subcommands
+
+### `start`
+
+Start the proxy server in the background.
+
+```bash
+portless proxy start
+```
+
+By default:
+- Listens on port 1355 (no sudo required)
+- Runs as a daemon (background process)
+- Logs to `~/.portless/proxy.log` or `/tmp/portless/proxy.log`
+
+### `stop`
+
+Stop the running proxy server.
+
+```bash
+portless proxy stop
+```
+
+Sends `SIGTERM` to the proxy process and cleans up state files.
+
+## Options
+
+### `--port <number>`, `-p <number>`
+
+Specify the port for the proxy to listen on. Must be between 1 and 65535.
+
+```bash
+portless proxy start -p 8080
+portless proxy start --port 3000
+```
+
+Ports below 1024 require sudo:
+```bash
+sudo portless proxy start -p 80
+```
+
+### `--https`
+
+Enable HTTP/2 with TLS using auto-generated certificates.
+
+```bash
+portless proxy start --https
+```
+
+On first run:
+1. Generates a local CA certificate
+2. Attempts to add CA to system trust store
+3. Generates a wildcard certificate for `*.localhost`
+
+Browsers will trust the certificates without warnings (after CA is trusted).
+
+### `--cert <path>`
+
+Use a custom TLS certificate. Must be used with `--key`. Implies `--https`.
+
+```bash
+portless proxy start --cert ./cert.pem --key ./key.pem
+```
+
+Certificate must be in PEM format starting with `-----BEGIN CERTIFICATE-----`.
+
+### `--key <path>`
+
+Use a custom TLS private key. Must be used with `--cert`. Implies `--https`.
+
+```bash
+portless proxy start --cert ./cert.pem --key ./key.pem
+```
+
+Key must be in PEM format starting with `-----BEGIN PRIVATE KEY-----` or similar.
+
+### `--no-tls`
+
+Disable HTTPS even if `PORTLESS_HTTPS` environment variable is set.
+
+```bash
+export PORTLESS_HTTPS=1
+portless proxy start --no-tls  # Starts without HTTPS
+```
+
+### `--foreground`
+
+Run the proxy in the foreground instead of as a daemon. Useful for debugging.
+
+```bash
+portless proxy start --foreground
+```
+
+Logs are printed to stdout/stderr instead of a log file.
+
+## Examples
+
+### Basic Start
+
+```bash
+portless proxy start
+```
+
+Output:
+```
+HTTP proxy started on port 1355
+```
+
+### Start with HTTPS
+
+```bash
+portless proxy start --https
+```
+
+Output:
+```
+Ensuring TLS certificates...
+Generated local CA certificate.
+Adding CA to system trust store...
+CA added to system trust store. Browsers will trust portless certs.
+HTTPS/2 proxy started on port 1355
+```
+
+### Start on Port 80 (Requires Sudo)
+
+```bash
+sudo portless proxy start -p 80
+```
+
+Output:
+```
+HTTP proxy started on port 80
+```
+
+Now your apps are accessible at `http://myapp.localhost` (no port in URL).
+
+### Start on Port 443 with HTTPS (Requires Sudo)
+
+```bash
+sudo portless proxy start -p 443 --https
+```
+
+Output:
+```
+HTTPS/2 proxy started on port 443
+```
+
+Now your apps are accessible at `https://myapp.localhost` (standard HTTPS port).
+
+### Use Custom Certificates
+
+```bash
+# Generate with mkcert
+mkcert -install
+mkcert "*.localhost"
+
+# Start proxy with custom certs
+portless proxy start --cert ./_wildcard.localhost.pem --key ./_wildcard.localhost-key.pem
+```
+
+### Stop the Proxy
+
+```bash
+portless proxy stop
+```
+
+Output:
+```
+Proxy stopped.
+```
+
+### Debug Mode (Foreground)
+
+```bash
+portless proxy start --foreground
+```
+
+Output:
+```
+portless proxy
+
+HTTP proxy listening on port 1355
+
+Proxy is running. Press Ctrl+C to stop.
+
+Routes file: /home/user/.portless/routes.json
+```
+
+Press Ctrl+C to stop.
+
+## Auto-Start
+
+The proxy auto-starts when you run an app with `portless run` or `portless <name>`:
+
+```bash
+portless myapp next dev
+```
+
+If the proxy is not running:
+- **Port < 1024**: Prompts for sudo permission
+- **Port >= 1024**: Starts silently without sudo
+
+You can skip auto-start by responding `skip` when prompted.
+
+## State Directory
+
+The proxy stores state in a directory that depends on the port:
+
+- **Port < 1024** (privileged): `/tmp/portless`
+- **Port >= 1024** (unprivileged): `~/.portless`
+
+Override with `PORTLESS_STATE_DIR` environment variable.
+
+State files:
+- `proxy.pid` - Process ID of the running proxy
+- `proxy.port` - Port the proxy is listening on
+- `proxy.tls` - Marker file (exists if HTTPS is enabled)
+- `proxy.log` - Proxy logs (daemon mode only)
+- `routes.json` - Active routes
+- `ca.pem`, `ca-key.pem` - Local CA (if using --https)
+- `cert.pem`, `key.pem` - Wildcard certificate (if using --https)
+
+## Errors
+
+### Port Already in Use
+
+```bash
+portless proxy start
+```
+
+Output:
+```
+Port 1355 is already in use.
+Stop the existing proxy first:
+  portless proxy stop
+Or check what is using the port:
+  lsof -ti tcp:1355
+```
+
+Solution: Stop the proxy or use a different port.
+
+### Permission Denied (Privileged Port)
+
+```bash
+portless proxy start -p 80
+```
+
+Output:
+```
+Error: Port 80 requires sudo.
+Either run with sudo:
+  sudo portless proxy start -p 80
+Or use the default port (no sudo needed):
+  portless proxy start
+```
+
+Solution: Run with sudo.
+
+### Already Running
+
+```bash
+portless proxy start
+```
+
+Output:
+```
+Proxy is already running on port 1355.
+To restart: portless proxy stop && portless proxy start
+```
+
+Solution: Stop first, then start.
+
+### Invalid Certificate
+
+```bash
+portless proxy start --cert invalid.pem --key key.pem
+```
+
+Output:
+```
+Error: invalid.pem is not a valid PEM certificate.
+Expected a file starting with -----BEGIN CERTIFICATE-----
+```
+
+Solution: Use a valid PEM certificate.
+
+### Missing --cert or --key
+
+```bash
+portless proxy start --cert cert.pem
+```
+
+Output:
+```
+Error: --cert and --key must be used together.
+```
+
+Solution: Provide both flags.
+
+## HTTP/2 Benefits
+
+Enabling HTTPS with `--https` enables HTTP/2, which provides:
+
+- **Connection multiplexing** - All requests over a single connection
+- **Faster page loads** - Eliminates HTTP/1.1's 6-connection limit
+- **Better for dev servers** - Vite, Nuxt, and other unbundled servers benefit most
+
+HTTP/2 requires TLS, so you must use `--https` or provide custom certificates.
+
+## Related Commands
+
+- [`portless run`](/commands/run) - Run an app (auto-starts proxy)
+- [`portless list`](/commands/list) - Show active routes
+- [`portless trust`](/commands/trust) - Trust the local CA
+
+## Exit Codes
+
+- **0** - Success
+- **1** - Error (port in use, permission denied, invalid arguments, failed to start)

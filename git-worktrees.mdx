@@ -1,0 +1,335 @@
+---
+title: Git Worktrees
+description: Automatic branch-based subdomain prefixing for git worktrees
+---
+
+## Overview
+
+Portless automatically detects git worktrees and uses the branch name as a subdomain prefix. This gives each worktree its own URL without any configuration changes or name collisions.
+
+<CodeGroup>
+
+```bash Main worktree
+cd ~/projects/myapp  # main branch
+portless run next dev
+# -> http://myapp.localhost:1355
+```
+
+```bash Linked worktree
+cd ~/worktrees/myapp-fix-ui  # fix-ui branch
+portless run next dev
+# -> http://fix-ui.myapp.localhost:1355
+```
+
+</CodeGroup>
+
+## How Detection Works
+
+Portless uses a multi-step heuristic to detect worktrees:
+
+<Steps>
+
+### Check Worktree Count
+
+Run `git worktree list --porcelain` to count the number of worktrees:
+
+<CodeGroup>
+
+```typescript auto.ts
+const listOutput = execFileSync("git", ["worktree", "list", "--porcelain"], {
+  cwd,
+  encoding: "utf-8",
+});
+
+// Count worktrees — each block starts with "worktree "
+const worktreeCount = listOutput
+  .split("\n")
+  .filter((l) => l.startsWith("worktree "))
+  .length;
+
+if (worktreeCount <= 1) {
+  // Single worktree (or not a git repo) — no prefix needed
+  return null;
+}
+```
+
+</CodeGroup>
+
+If there's only one worktree, no prefix is added (this is the main checkout).
+
+### Get Current Branch
+
+If multiple worktrees exist, get the current branch name:
+
+<CodeGroup>
+
+```typescript auto.ts
+const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+  cwd,
+  encoding: "utf-8",
+}).trim();
+```
+
+</CodeGroup>
+
+### Convert Branch to Prefix
+
+The branch name is converted to a subdomain prefix:
+
+<CodeGroup>
+
+```typescript auto.ts
+function branchToPrefix(branch: string): string | null {
+  // Skip default branches
+  if (!branch || branch === "HEAD" || ["main", "master"].includes(branch)) {
+    return null;
+  }
+  
+  // Use only the last segment after the final /
+  // e.g., "feature/auth" -> "auth"
+  const lastSegment = branch.split("/").pop()!;
+  
+  // Sanitize for use as a DNS label
+  const prefix = sanitizeForHostname(lastSegment);
+  
+  return prefix || null;
+}
+```
+
+</CodeGroup>
+
+</Steps>
+
+## Branch Name Handling
+
+### Default Branches
+
+The main worktree (on `main` or `master`) gets **no prefix**:
+
+```bash
+git worktree list
+# /home/user/myapp     main   [main]
+# /home/user/fix-ui    fix-ui [fix-ui]
+
+cd /home/user/myapp
+portless run next dev
+# -> http://myapp.localhost:1355  (no prefix)
+```
+
+### Slashes in Branch Names
+
+Branches with slashes use **only the last segment**:
+
+```bash
+git checkout -b feature/auth
+portless run next dev
+# -> http://auth.myapp.localhost:1355
+
+git checkout -b bugfix/api/rate-limit
+portless run next dev
+# -> http://rate-limit.myapp.localhost:1355
+```
+
+### Sanitization
+
+Branch names are sanitized to be valid DNS labels:
+
+- Lowercased
+- Non-alphanumeric characters replaced with hyphens
+- Consecutive hyphens collapsed
+- Leading/trailing hyphens trimmed
+- Truncated to 63 characters (RFC 1035 limit)
+
+<CodeGroup>
+
+```typescript auto.ts
+export function sanitizeForHostname(name: string): string {
+  const sanitized = name
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return truncateLabel(sanitized);
+}
+```
+
+</CodeGroup>
+
+**Examples:**
+
+| Branch Name | Sanitized Prefix |
+|-------------|------------------|
+| `fix-ui` | `fix-ui` |
+| `feature/auth` | `auth` |
+| `bugfix/API_Rate_Limit` | `rate-limit` |
+| `user/alice/wip` | `wip` |
+
+## Fallback Detection
+
+If the `git` binary is unavailable, portless falls back to parsing the `.git` file:
+
+<CodeGroup>
+
+```typescript auto.ts
+function detectWorktreeViaFilesystem(startDir: string): WorktreePrefix | null {
+  const gitPath = path.join(startDir, ".git");
+  const stat = fs.statSync(gitPath);
+  
+  if (stat.isFile()) {
+    // Worktrees have a .git file (not a directory)
+    const content = fs.readFileSync(gitPath, "utf-8").trim();
+    // gitdir: /path/to/.git/worktrees/fix-ui
+    const match = content.match(/^gitdir:\s*(.+)$/);
+    
+    if (!match) return null;
+    const gitdir = match[1];
+    
+    // Only treat as a worktree if gitdir points to /worktrees/
+    if (!gitdir.match(/\/worktrees\/[^/]+$/)) return null;
+    
+    // Read branch name from HEAD file
+    const head = fs.readFileSync(path.join(gitdir, "HEAD"), "utf-8");
+    const refMatch = head.match(/^ref: refs\/heads\/(.+)$/);
+    const branch = refMatch ? refMatch[1] : null;
+    
+    return branchToPrefix(branch);
+  }
+  
+  return null;
+}
+```
+
+</CodeGroup>
+
+This ensures portless works even in minimal environments (Docker, CI) where git may not be installed.
+
+## Examples
+
+### Basic Worktree Setup
+
+<Steps>
+
+### Create a worktree
+
+```bash
+git worktree add ../myapp-fix-ui fix-ui
+cd ../myapp-fix-ui
+```
+
+### Run your app
+
+```bash
+portless run next dev
+# -> http://fix-ui.myapp.localhost:1355
+```
+
+### Main worktree still works
+
+```bash
+cd ../myapp  # main branch
+portless run next dev
+# -> http://myapp.localhost:1355
+```
+
+</Steps>
+
+Both instances run simultaneously without conflicts.
+
+### Monorepo with Multiple Services
+
+```bash
+# Main worktree (main branch)
+cd ~/monorepo
+portless frontend pnpm dev
+# -> http://frontend.localhost:1355
+portless api pnpm start
+# -> http://api.localhost:1355
+
+# Worktree (feature/auth branch)
+cd ~/worktrees/monorepo-auth
+portless frontend pnpm dev
+# -> http://auth.frontend.localhost:1355
+portless api pnpm start
+# -> http://auth.api.localhost:1355
+```
+
+### Explicit Subdomain with Worktree Prefix
+
+If you use an explicit subdomain, the worktree prefix is still prepended:
+
+```bash
+cd ~/worktrees/myapp-fix-ui  # fix-ui branch
+portless api.myapp pnpm start
+# -> http://fix-ui.api.myapp.localhost:1355
+```
+
+## Disabling Worktree Detection
+
+Use the `--no-worktree` flag with `portless get` to skip worktree detection:
+
+```bash
+# In a worktree on branch fix-ui
+portless get backend
+# -> http://fix-ui.backend.localhost:1355
+
+portless get backend --no-worktree
+# -> http://backend.localhost:1355
+```
+
+This is useful when you need a consistent URL regardless of the current worktree.
+
+<Info>
+There is currently no flag to disable worktree detection for `portless run` or `portless <name>`. If you need this, use `--name` to force a specific name:
+
+```bash
+portless --name myapp next dev
+# -> http://myapp.localhost:1355 (no worktree prefix)
+```
+</Info>
+
+## Integration with `package.json`
+
+Put `portless run` in your `package.json` scripts:
+
+```json package.json
+{
+  "scripts": {
+    "dev": "portless run next dev"
+  }
+}
+```
+
+This works everywhere:
+
+- **Main worktree**: `pnpm dev` → `http://myapp.localhost:1355`
+- **Linked worktree**: `pnpm dev` → `http://fix-ui.myapp.localhost:1355`
+
+No configuration changes needed.
+
+## Wildcard Subdomain Routing
+
+Worktree URLs benefit from wildcard subdomain routing. If you register `myapp.localhost`, then:
+
+- `myapp.localhost` routes to your app
+- `fix-ui.myapp.localhost` routes to your app
+- `auth.myapp.localhost` routes to your app
+- `anything.myapp.localhost` routes to your app
+
+This means you can run multiple worktrees without explicitly registering each one:
+
+```bash
+# Main worktree registers the base name
+cd ~/myapp
+portless run next dev
+# Registers: myapp.localhost -> 4123
+
+# Worktree automatically routes via wildcard
+cd ~/worktrees/myapp-fix-ui
+portless run next dev
+# Registers: fix-ui.myapp.localhost -> 4567
+# Routes via wildcard: *.myapp.localhost -> 4123 (main app)
+```
+
+<Note>
+Wildcard routing matches the **longest registered suffix**. If you explicitly register `fix-ui.myapp.localhost`, that route takes precedence over the wildcard match for `myapp.localhost`.
+</Note>

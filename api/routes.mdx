@@ -1,0 +1,291 @@
+---
+title: "RouteStore"
+description: "Manage route mappings with file-based persistence and locking"
+---
+
+## Class Overview
+
+```typescript
+class RouteStore {
+  constructor(dir: string, options?: { onWarning?: (message: string) => void })
+}
+```
+
+Manages route mappings stored as a JSON file on disk. Provides file locking for concurrent access, automatic cleanup of stale routes, and process lifecycle tracking.
+
+## Constructor
+
+<ParamField path="dir" type="string" required>
+  Path to the state directory where route data will be stored. The directory will be created if it doesn't exist.
+  
+  ```typescript
+  const store = new RouteStore("/tmp/portless-state");
+  ```
+</ParamField>
+
+<ParamField path="options" type="object">
+  Optional configuration
+  
+  <Expandable title="Options properties">
+    <ParamField path="onWarning" type="(message: string) => void">
+      Callback invoked when warnings occur (corrupted files, stale locks, etc.)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Properties
+
+<ResponseField name="dir" type="string">
+  The state directory path (read-only)
+</ResponseField>
+
+<ResponseField name="pidPath" type="string">
+  Path to the proxy PID file (read-only)
+</ResponseField>
+
+<ResponseField name="portFilePath" type="string">
+  Path to the proxy port file (read-only)
+</ResponseField>
+
+## Methods
+
+### ensureDir()
+
+```typescript
+ensureDir(): void
+```
+
+Creates the state directory if it doesn't exist and sets appropriate permissions. Automatically called by `addRoute()` and `removeRoute()`.
+
+**Example:**
+```typescript
+const store = new RouteStore("/tmp/portless");
+store.ensureDir();
+```
+
+### addRoute()
+
+```typescript
+addRoute(hostname: string, port: number, pid: number, force?: boolean): void
+```
+
+Registers a route mapping from a hostname to a local port. Acquires a file lock, checks for conflicts, and persists the route to disk.
+
+<ParamField path="hostname" type="string" required>
+  The hostname to register (e.g., "api.localhost")
+</ParamField>
+
+<ParamField path="port" type="number" required>
+  The local port the application is listening on
+</ParamField>
+
+<ParamField path="pid" type="number" required>
+  Process ID of the owning process. Use `process.pid` for the current process, or `0` for system-managed routes.
+</ParamField>
+
+<ParamField path="force" type="boolean" default="false">
+  Override an existing route even if owned by a live process
+</ParamField>
+
+**Throws:**
+- `RouteConflictError` - When hostname is already registered by a live process and `force` is false
+- `Error` - When the file lock cannot be acquired
+
+**Example:**
+```typescript
+store.addRoute("api.localhost", 3000, process.pid);
+
+// Override existing route
+store.addRoute("api.localhost", 3001, process.pid, true);
+```
+
+### removeRoute()
+
+```typescript
+removeRoute(hostname: string): void
+```
+
+Unregisters a route mapping. Acquires a file lock and removes the route from persistent storage.
+
+<ParamField path="hostname" type="string" required>
+  The hostname to unregister
+</ParamField>
+
+**Throws:**
+- `Error` - When the file lock cannot be acquired
+
+**Example:**
+```typescript
+store.removeRoute("api.localhost");
+
+// Cleanup on process exit
+process.on("SIGINT", () => {
+  store.removeRoute("api.localhost");
+  process.exit(0);
+});
+```
+
+### loadRoutes()
+
+```typescript
+loadRoutes(persistCleanup?: boolean): RouteMapping[]
+```
+
+Loads all routes from disk, filtering out stale entries whose owning process is no longer alive.
+
+<ParamField path="persistCleanup" type="boolean" default="false">
+  When true, writes the cleaned-up route list back to disk. Only safe when the caller already holds the lock (used internally by `addRoute` and `removeRoute`).
+</ParamField>
+
+**Returns:**
+- `RouteMapping[]` - Array of live route mappings
+
+**Example:**
+```typescript
+const routes = store.loadRoutes();
+routes.forEach(route => {
+  console.log(`${route.hostname} -> localhost:${route.port} (PID ${route.pid})`);
+});
+```
+
+### getRoutesPath()
+
+```typescript
+getRoutesPath(): string
+```
+
+Returns the absolute path to the routes JSON file.
+
+**Example:**
+```typescript
+const path = store.getRoutesPath();
+console.log(`Routes stored at: ${path}`);
+```
+
+## File Locking
+
+The `RouteStore` uses directory-based file locking to coordinate concurrent access:
+
+- Lock acquisition retries up to 20 times with 50ms delays
+- Stale locks (older than 10 seconds) are automatically removed
+- All write operations (`addRoute`, `removeRoute`) acquire the lock automatically
+
+<Warning>
+  Do not manually modify the routes file while applications are running. Use the `RouteStore` API to ensure proper locking.
+</Warning>
+
+## Stale Route Cleanup
+
+Routes are automatically cleaned up when:
+1. The owning process terminates (detected via PID check)
+2. Any method loads the routes from disk
+3. Routes with `pid: 0` are never removed (system-managed)
+
+## Error Handling
+
+### RouteConflictError
+
+```typescript
+class RouteConflictError extends Error {
+  readonly hostname: string;
+  readonly existingPid: number;
+}
+```
+
+Thrown when attempting to register a hostname that's already in use:
+
+```typescript
+try {
+  store.addRoute("api.localhost", 3000, process.pid);
+} catch (err) {
+  if (err instanceof RouteConflictError) {
+    console.error(`${err.hostname} is already registered by PID ${err.existingPid}`);
+    // Use force flag to override
+    store.addRoute(err.hostname, 3000, process.pid, true);
+  }
+}
+```
+
+## Complete Example
+
+```typescript
+import { RouteStore, createProxyServer } from "portless";
+import { spawn } from "node:child_process";
+
+// Initialize store
+const store = new RouteStore("/tmp/portless", {
+  onWarning: (msg) => console.warn(`[WARNING] ${msg}`),
+});
+
+store.ensureDir();
+
+// Start an application
+const app = spawn("node", ["server.js"], {
+  env: { PORT: "3000" },
+});
+
+// Register the route
+try {
+  store.addRoute("myapp.localhost", 3000, app.pid);
+  console.log("Route registered: http://myapp.localhost:8080");
+} catch (err) {
+  console.error("Failed to register route:", err);
+  app.kill();
+  process.exit(1);
+}
+
+// Create proxy server
+const proxy = createProxyServer({
+  getRoutes: () => store.loadRoutes(),
+  proxyPort: 8080,
+});
+
+proxy.listen(8080);
+
+// Cleanup on exit
+process.on("SIGINT", () => {
+  store.removeRoute("myapp.localhost");
+  proxy.close();
+  app.kill();
+  process.exit(0);
+});
+
+// Cleanup if child process exits
+app.on("exit", () => {
+  store.removeRoute("myapp.localhost");
+});
+```
+
+## Type Definitions
+
+```typescript
+interface RouteMapping extends RouteInfo {
+  pid: number;
+}
+
+interface RouteInfo {
+  hostname: string;
+  port: number;
+}
+```
+
+## Constants
+
+```typescript
+// File permissions
+export const FILE_MODE = 0o644;
+export const DIR_MODE = 0o755;
+export const SYSTEM_DIR_MODE = 0o1777;
+export const SYSTEM_FILE_MODE = 0o666;
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="createProxyServer" icon="server" href="/api/proxy">
+    Create a proxy server that uses routes
+  </Card>
+  <Card title="Type Definitions" icon="code" href="/api/types">
+    Complete type reference
+  </Card>
+</CardGroup>

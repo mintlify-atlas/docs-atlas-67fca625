@@ -1,80 +1,236 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get started with Portless in under 2 minutes
 ---
 
-## Get started in three steps
+# Quickstart
 
-Get your documentation site running locally and make your first customization.
+Get Portless up and running in under 2 minutes.
 
-### Step 1: Set up your local environment
+## Installation
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+<Steps>
+  <Step title="Install Portless globally">
+    Install via npm:
 
-### Step 2: Deploy your changes
+    ```bash
+    npm install -g portless
+    ```
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    <Info>
+      Portless requires Node.js 20+ and works on macOS and Linux.
+    </Info>
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Run your first app">
+    Navigate to any project and run your dev server through Portless:
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash
+    portless run next dev
+    ```
 
-### Step 3: Go live
+    Or specify a name explicitly:
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    ```bash
+    portless myapp next dev
+    ```
 
-## Next steps
+    The proxy will auto-start if needed, and your app will be available at:
 
-Now that you have your docs running, explore these key features:
+    ```
+    http://myapp.localhost:1355
+    ```
+
+    <Tip>
+      The name is automatically inferred from your `package.json`, git repo, or directory name when you use `portless run`.
+    </Tip>
+  </Step>
+
+  <Step title="Access your app">
+    Open your browser and visit:
+
+    ```
+    http://myapp.localhost:1355
+    ```
+
+    That's it! Your app is now running with a stable, human-readable URL.
+  </Step>
+</Steps>
+
+## First Commands
+
+### Run with Auto-Inferred Name
+
+Portless automatically infers your project name from `package.json`, git repo, or directory:
+
+```bash
+portless run next dev
+# -> http://<project>.localhost:1355
+```
+
+### Run with Explicit Name
+
+Specify the name directly:
+
+```bash
+portless myapp next dev
+# -> http://myapp.localhost:1355
+```
+
+### Use Subdomains
+
+Organize related services under the same domain:
+
+```bash
+portless api.myapp pnpm start
+# -> http://api.myapp.localhost:1355
+
+portless docs.myapp npm run dev
+# -> http://docs.myapp.localhost:1355
+```
+
+### Add to package.json
+
+Make Portless the default for your project:
+
+```json package.json
+{
+  "scripts": {
+    "dev": "portless run next dev"
+  }
+}
+```
+
+Now anyone on your team can just run `npm run dev` and get a stable URL.
+
+<Info>
+  The proxy auto-starts when you run an app. You can also start it explicitly with `portless proxy start`.
+</Info>
+
+## Working Example
+
+Let's say you're building a full-stack app with a Next.js frontend and an Express API.
+
+<Steps>
+  <Step title="Start the API">
+    ```bash
+    cd api
+    portless api.myapp node server.js
+    ```
+
+    Your API is now running at `http://api.myapp.localhost:1355`.
+  </Step>
+
+  <Step title="Start the frontend">
+    ```bash
+    cd frontend
+    portless myapp next dev
+    ```
+
+    Your frontend is now running at `http://myapp.localhost:1355`.
+  </Step>
+
+  <Step title="Configure the frontend to call the API">
+    Update your frontend to call the API by its stable URL:
+
+    ```typescript app/api/route.ts
+    export async function GET() {
+      const response = await fetch('http://api.myapp.localhost:1355/data');
+      const data = await response.json();
+      return Response.json(data);
+    }
+    ```
+
+    No more hardcoded port numbers. The URL stays the same even if the underlying port changes.
+  </Step>
+</Steps>
+
+## Git Worktree Support
+
+If you use git worktrees, Portless automatically detects them and prepends the branch name as a subdomain:
+
+```bash
+# Main worktree (main/master branch)
+portless run next dev
+# -> http://myapp.localhost:1355
+
+# Linked worktree on branch "fix-ui"
+portless run next dev
+# -> http://fix-ui.myapp.localhost:1355
+
+# Linked worktree on branch "feature/auth"
+portless run next dev
+# -> http://auth.myapp.localhost:1355
+```
+
+This means you can put `portless run` in your `package.json` once and it just works everywhere - the main checkout uses the plain name, and each worktree gets a unique subdomain. No `--force` needed, no name collisions.
+
+<Tip>
+  You can disable Portless temporarily by setting `PORTLESS=0` or `PORTLESS=skip` when running commands.
+</Tip>
+
+## Managing the Proxy
+
+The proxy starts automatically when you run an app, but you can also control it manually:
+
+<CodeGroup>
+
+```bash Start
+portless proxy start
+```
+
+```bash Stop
+portless proxy stop
+```
+
+```bash List Routes
+portless list
+```
+
+```bash Start with HTTPS
+portless proxy start --https
+```
+
+</CodeGroup>
+
+## Environment Variables Injected
+
+When you run an app through Portless, these environment variables are automatically injected:
+
+| Variable | Description | Example |
+|----------|-------------|----------|
+| `PORT` | The port your app should listen on | `4123` |
+| `HOST` | The host your app should bind to | `127.0.0.1` |
+| `PORTLESS_URL` | The public URL to access your app | `http://myapp.localhost:1355` |
+
+Most frameworks automatically respect `PORT` and `HOST`. For frameworks that don't, Portless auto-injects the correct flags.
+
+## Static Aliases (Advanced)
+
+If you have a service running outside of Portless (like a Docker container), you can register it manually:
+
+```bash
+portless alias db 5432
+# -> http://db.localhost:1355 routes to localhost:5432
+```
+
+To remove an alias:
+
+```bash
+portless alias --remove db
+```
+
+## Next Steps
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Why Portless?" icon="lightbulb" href="/why">
+    Learn about the problems Portless solves and real-world use cases
+  </Card>
+  <Card title="Environment Variables" icon="gear" href="/environment-variables">
+    Configure Portless with environment variables and advanced options
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+<Warning>
+  If you're using Safari and `.localhost` URLs don't resolve, run `sudo portless hosts sync`. Safari relies on the system DNS resolver which may not handle `.localhost` subdomains on all configurations.
+</Warning>

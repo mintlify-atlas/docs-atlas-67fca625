@@ -1,0 +1,84 @@
+---
+title: "Programmatic API"
+description: "Use Portless as a library in your Node.js applications"
+---
+
+## When to Use the Programmatic API
+
+The Portless programmatic API allows you to embed the proxy server directly into your Node.js application. Use this when:
+
+- You need custom routing logic beyond hostname-based matching
+- You want to integrate Portless into an existing Node.js tool or framework
+- You need programmatic control over route registration and lifecycle
+- You're building a development platform that manages multiple services
+
+<Note>
+For most use cases, the CLI is the recommended approach. Only use the programmatic API if you need custom integration.
+</Note>
+
+## Installation
+
+Install Portless as a dependency in your project:
+
+```bash
+npm install portless
+```
+
+## Basic Usage
+
+Here's a minimal example that creates a proxy server and registers a route:
+
+```typescript
+import { createProxyServer, RouteStore } from "portless";
+
+const store = new RouteStore("/tmp/portless-state");
+store.ensureDir();
+
+// Register a route: api.localhost -> localhost:3000
+store.addRoute("api.localhost", 3000, process.pid);
+
+// Create the proxy server
+const server = createProxyServer({
+  getRoutes: () => store.loadRoutes(),
+  proxyPort: 8080,
+  onError: (msg) => console.error(msg),
+});
+
+server.listen(8080, () => {
+  console.log("Proxy server listening on port 8080");
+});
+
+// Cleanup on exit
+process.on("SIGINT", () => {
+  store.removeRoute("api.localhost");
+  server.close();
+  process.exit(0);
+});
+```
+
+## Key Components
+
+The Portless API consists of three main components:
+
+<CardGroup cols={3}>
+  <Card title="createProxyServer" icon="server" href="/api/proxy">
+    Create an HTTP/HTTPS proxy server with hostname-based routing
+  </Card>
+  <Card title="RouteStore" icon="database" href="/api/routes">
+    Manage route mappings with file-based persistence
+  </Card>
+  <Card title="Type Definitions" icon="code" href="/api/types">
+    TypeScript interfaces for routes and configuration
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Proxy Server" icon="server" href="/api/proxy">
+    Learn how to create and configure proxy servers
+  </Card>
+  <Card title="Route Management" icon="route" href="/api/routes">
+    Understand route registration and persistence
+  </Card>
+</CardGroup>

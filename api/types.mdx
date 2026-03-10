@@ -1,0 +1,313 @@
+---
+title: "Type Definitions"
+description: "TypeScript interfaces and types exported by Portless"
+---
+
+## Core Types
+
+### RouteInfo
+
+```typescript
+interface RouteInfo {
+  hostname: string;
+  port: number;
+}
+```
+
+Represents a mapping from a hostname to a local port. Used by the proxy server to route incoming requests.
+
+<ParamField path="hostname" type="string">
+  The hostname to match against the Host header (e.g., "api.localhost", "app.myproject.localhost")
+</ParamField>
+
+<ParamField path="port" type="number">
+  The local port number where the application is listening (e.g., 3000, 4000)
+</ParamField>
+
+**Example:**
+```typescript
+const route: RouteInfo = {
+  hostname: "api.localhost",
+  port: 3000,
+};
+```
+
+### RouteMapping
+
+```typescript
+interface RouteMapping extends RouteInfo {
+  pid: number;
+}
+```
+
+Extends `RouteInfo` with process tracking. Used internally by `RouteStore` to manage route ownership and lifecycle.
+
+<ParamField path="pid" type="number">
+  Process ID of the application that registered this route. Use `process.pid` for the current process, or `0` for system-managed routes that should never be automatically cleaned up.
+</ParamField>
+
+**Example:**
+```typescript
+const mapping: RouteMapping = {
+  hostname: "api.localhost",
+  port: 3000,
+  pid: process.pid,
+};
+```
+
+### ProxyServerOptions
+
+```typescript
+interface ProxyServerOptions {
+  getRoutes: () => RouteInfo[];
+  proxyPort: number;
+  onError?: (message: string) => void;
+  tls?: {
+    cert: Buffer;
+    key: Buffer;
+    SNICallback?: (
+      servername: string,
+      cb: (err: Error | null, ctx?: import("node:tls").SecureContext) => void
+    ) => void;
+  };
+}
+```
+
+Configuration options for `createProxyServer()`.
+
+<ParamField path="getRoutes" type="() => RouteInfo[]" required>
+  Callback function invoked on every request to retrieve the current route table. This enables dynamic routing where routes can be added/removed without restarting the server.
+</ParamField>
+
+<ParamField path="proxyPort" type="number" required>
+  The port number the proxy server is listening on. Used to construct correct URLs in error pages and route listings.
+</ParamField>
+
+<ParamField path="onError" type="(message: string) => void">
+  Optional error logger called when proxy errors occur. Defaults to `console.error` if not provided.
+</ParamField>
+
+<ParamField path="tls" type="TLSOptions">
+  Optional TLS configuration. When provided, enables HTTP/2 over TLS with HTTP/1.1 fallback.
+  
+  <Expandable title="TLS properties">
+    <ParamField path="cert" type="Buffer" required>
+      TLS certificate as a Buffer (use `fs.readFileSync()` to load from disk)
+    </ParamField>
+    
+    <ParamField path="key" type="Buffer" required>
+      TLS private key as a Buffer (use `fs.readFileSync()` to load from disk)
+    </ParamField>
+    
+    <ParamField path="SNICallback" type="Function">
+      Optional Server Name Indication (SNI) callback for selecting different certificates based on the requested hostname.
+      
+      ```typescript
+      SNICallback: (servername: string, cb) => {
+        const ctx = tls.createSecureContext({
+          cert: getCertForHostname(servername),
+          key: getKeyForHostname(servername),
+        });
+        cb(null, ctx);
+      }
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+**Example:**
+```typescript
+import * as fs from "node:fs";
+
+const options: ProxyServerOptions = {
+  getRoutes: () => [
+    { hostname: "api.localhost", port: 3000 },
+    { hostname: "app.localhost", port: 4000 },
+  ],
+  proxyPort: 8080,
+  onError: (msg) => console.error(`[proxy] ${msg}`),
+  tls: {
+    cert: fs.readFileSync("cert.pem"),
+    key: fs.readFileSync("key.pem"),
+  },
+};
+```
+
+### ProxyServer
+
+```typescript
+type ProxyServer = http.Server | net.Server;
+```
+
+Return type of `createProxyServer()`. When TLS is disabled, returns an `http.Server`. When TLS is enabled, returns a `net.Server` that wraps both HTTP/2 and HTTP/1.1 servers.
+
+**Example:**
+```typescript
+import type { ProxyServer } from "portless";
+
+let server: ProxyServer;
+
+if (useTLS) {
+  server = createProxyServer({ ...options, tls: tlsConfig });
+} else {
+  server = createProxyServer(options);
+}
+
+server.listen(8080);
+```
+
+## Error Types
+
+### RouteConflictError
+
+```typescript
+class RouteConflictError extends Error {
+  readonly hostname: string;
+  readonly existingPid: number;
+  
+  constructor(hostname: string, existingPid: number);
+}
+```
+
+Thrown by `RouteStore.addRoute()` when attempting to register a hostname that's already in use by a live process (unless `force: true` is specified).
+
+<ParamField path="hostname" type="string">
+  The hostname that caused the conflict
+</ParamField>
+
+<ParamField path="existingPid" type="number">
+  Process ID of the process that currently owns the hostname
+</ParamField>
+
+**Example:**
+```typescript
+import { RouteStore, RouteConflictError } from "portless";
+
+const store = new RouteStore("/tmp/portless");
+
+try {
+  store.addRoute("api.localhost", 3000, process.pid);
+} catch (err) {
+  if (err instanceof RouteConflictError) {
+    console.error(
+      `Cannot register ${err.hostname}: already owned by PID ${err.existingPid}`
+    );
+    
+    // Option 1: Wait for the other process to exit
+    // Option 2: Use force flag to override
+    store.addRoute(err.hostname, 3000, process.pid, true);
+  } else {
+    throw err;
+  }
+}
+```
+
+## Constants
+
+### PORTLESS_HEADER
+
+```typescript
+const PORTLESS_HEADER = "X-Portless";
+```
+
+HTTP response header added to all proxied responses. Used to identify that a response came through a Portless proxy (useful for health checks and debugging).
+
+**Example:**
+```typescript
+fetch("http://api.localhost:8080/health")
+  .then(res => {
+    if (res.headers.get("X-Portless")) {
+      console.log("Request went through Portless proxy");
+    }
+  });
+```
+
+### File Permissions
+
+```typescript
+export const FILE_MODE = 0o644;        // Route/state files (-rw-r--r--)
+export const DIR_MODE = 0o755;         // User state directory (drwxr-xr-x)
+export const SYSTEM_DIR_MODE = 0o1777; // System state directory (drwxrwxrwt)
+export const SYSTEM_FILE_MODE = 0o666; // System state files (-rw-rw-rw-)
+```
+
+File and directory permission modes used by `RouteStore`.
+
+## Import Examples
+
+### ESM (Recommended)
+
+```typescript
+import {
+  createProxyServer,
+  RouteStore,
+  RouteConflictError,
+  PORTLESS_HEADER,
+} from "portless";
+
+import type {
+  ProxyServer,
+  ProxyServerOptions,
+  RouteInfo,
+  RouteMapping,
+} from "portless";
+```
+
+### CommonJS
+
+```javascript
+const {
+  createProxyServer,
+  RouteStore,
+  RouteConflictError,
+  PORTLESS_HEADER,
+} = require("portless");
+```
+
+## Type Guards
+
+### isValidRoute (Internal)
+
+While not exported, here's how `RouteStore` validates route data:
+
+```typescript
+function isValidRoute(value: unknown): value is RouteMapping {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as RouteMapping).hostname === "string" &&
+    typeof (value as RouteMapping).port === "number" &&
+    typeof (value as RouteMapping).pid === "number"
+  );
+}
+```
+
+You can implement similar validation in your code:
+
+```typescript
+function validateRouteInfo(data: unknown): RouteInfo {
+  if (
+    typeof data !== "object" ||
+    data === null ||
+    typeof (data as RouteInfo).hostname !== "string" ||
+    typeof (data as RouteInfo).port !== "number"
+  ) {
+    throw new TypeError("Invalid RouteInfo object");
+  }
+  return data as RouteInfo;
+}
+```
+
+## Related
+
+<CardGroup cols={3}>
+  <Card title="API Overview" icon="book" href="/api/overview">
+    Getting started with the programmatic API
+  </Card>
+  <Card title="createProxyServer" icon="server" href="/api/proxy">
+    Create proxy servers
+  </Card>
+  <Card title="RouteStore" icon="database" href="/api/routes">
+    Manage route mappings
+  </Card>
+</CardGroup>

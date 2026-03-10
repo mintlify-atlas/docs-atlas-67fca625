@@ -1,0 +1,217 @@
+---
+title: Safari DNS Issues
+description: How to fix .localhost subdomain resolution in Safari
+---
+
+Portless uses `.localhost` subdomains (e.g., `myapp.localhost`) to provide stable, named URLs for your development servers. While most browsers handle these automatically, Safari relies on the system DNS resolver, which may not resolve `.localhost` subdomains to `127.0.0.1`.
+
+## The Problem
+
+When you try to access `http://myapp.localhost:1355` in Safari, you may see:
+
+- "Safari can't find the server"
+- "Can't connect to the server"
+- DNS resolution errors
+
+This happens because:
+
+1. Chrome, Firefox, and Edge have built-in handling for `.localhost` domains
+2. Safari uses the system DNS resolver (mDNSResponder on macOS)
+3. The system resolver may not be configured to resolve `.localhost` subdomains
+
+<Note>
+  The base `.localhost` domain (e.g., `localhost:1355`) typically works fine. The issue is specifically with **subdomains** like `myapp.localhost` or `api.myapp.localhost`.
+</Note>
+
+## Solution 1: Manual Hosts File Sync (Recommended)
+
+The most reliable solution is to add entries to `/etc/hosts` for your Portless routes.
+
+### Sync Current Routes
+
+Run this command to add all active routes to `/etc/hosts`:
+
+```bash
+sudo portless hosts sync
+```
+
+This reads the current routes from Portless and adds entries like:
+
+```
+# portless-start
+127.0.0.1 myapp.localhost
+127.0.0.1 api.localhost
+127.0.0.1 admin.myapp.localhost
+# portless-end
+```
+
+Safari will now resolve these domains correctly.
+
+### Re-sync After Adding Routes
+
+Whenever you start a new app with Portless, re-run the sync command:
+
+```bash
+# Start a new app
+portless newapp npm start
+
+# Sync /etc/hosts again
+sudo portless hosts sync
+```
+
+### Clean Up
+
+When you're done developing, remove the Portless entries:
+
+```bash
+sudo portless hosts clean
+```
+
+This removes only the Portless-managed block (between the markers), leaving other `/etc/hosts` entries intact.
+
+## Solution 2: Automatic Hosts File Syncing
+
+Portless can automatically update `/etc/hosts` whenever routes change, eliminating the need to manually run `hosts sync`.
+
+### Enable Auto-Sync
+
+1. Set the `PORTLESS_SYNC_HOSTS` environment variable:
+
+   ```bash
+   export PORTLESS_SYNC_HOSTS=1
+   ```
+
+   Add this to your shell configuration (`.zshrc`, `.bashrc`, etc.) to make it permanent.
+
+2. Start the proxy with `sudo` (required for `/etc/hosts` write access):
+
+   ```bash
+   sudo portless proxy start
+   ```
+
+3. Routes will now be automatically synced to `/etc/hosts` whenever they change.
+
+### How It Works
+
+When `PORTLESS_SYNC_HOSTS=1`:
+
+- The proxy watches `routes.json` for changes
+- On startup, it syncs all existing routes to `/etc/hosts`
+- When you start a new app, the route is immediately added to `/etc/hosts`
+- When you stop an app, the route is removed from `/etc/hosts`
+- On proxy shutdown, all Portless entries are cleaned up
+
+### Caveats
+
+<Warning>
+  Auto-sync requires the proxy to run as root (`sudo portless proxy start`). This means:
+  
+  - You'll need to enter your password when starting the proxy
+  - The proxy process runs with elevated privileges
+  - Apps can still run as your regular user and register routes (via `/tmp/portless`)
+</Warning>
+
+If you prefer not to run the proxy as root, use **Solution 1** (manual syncing) instead.
+
+## Solution 3: Use Different Browsers
+
+If you don't need to test in Safari specifically, use Chrome, Firefox, or Edge. These browsers have native support for `.localhost` subdomain resolution and don't require any hosts file configuration.
+
+## Verification
+
+To verify that DNS resolution is working:
+
+```bash
+# Test resolution
+ping myapp.localhost
+
+# Should respond from 127.0.0.1:
+# PING myapp.localhost (127.0.0.1): 56 data bytes
+# 64 bytes from 127.0.0.1: icmp_seq=0 ttl=64 time=0.033 ms
+```
+
+If ping works but Safari still doesn't connect, the issue is likely with the Portless proxy itself rather than DNS resolution.
+
+## Checking Current Hosts Entries
+
+To see what Portless has added to `/etc/hosts`:
+
+```bash
+grep -A 100 "portless-start" /etc/hosts | grep -B 100 "portless-end"
+```
+
+Or view the entire file:
+
+```bash
+cat /etc/hosts
+```
+
+## Troubleshooting
+
+### "Permission denied" when running hosts sync
+
+You need to run the command with `sudo`:
+
+```bash
+sudo portless hosts sync
+```
+
+### Auto-sync not working
+
+Ensure:
+
+1. `PORTLESS_SYNC_HOSTS=1` is exported in your environment
+2. The proxy was started with `sudo portless proxy start`
+3. The proxy is actually running (`portless list`)
+
+Check the proxy logs for errors:
+
+```bash
+# If using default port (1355):
+tail -f ~/.portless/proxy.log
+
+# If using port 80 (privileged):
+sudo tail -f /tmp/portless/proxy.log
+```
+
+### Safari still not connecting after sync
+
+Try:
+
+1. Clear Safari's DNS cache by restarting Safari
+2. Flush the system DNS cache:
+   ```bash
+   sudo dscacheutil -flushcache
+   sudo killall -HUP mDNSResponder
+   ```
+3. Verify the route exists: `portless list`
+4. Test if the proxy is responding:
+   ```bash
+   curl http://myapp.localhost:1355
+   ```
+
+### Entries not removed after stopping an app
+
+If using auto-sync, entries should be removed automatically. If they persist:
+
+1. Restart the proxy:
+   ```bash
+   sudo portless proxy stop
+   sudo portless proxy start
+   ```
+2. Manually clean up:
+   ```bash
+   sudo portless hosts clean
+   sudo portless hosts sync
+   ```
+
+## Alternative: Use Port-Only URLs
+
+If modifying `/etc/hosts` is not an option, you can access your apps via `http://localhost:PORT` directly, bypassing the proxy:
+
+```bash
+# Run without portless
+PORTLESS=0 npm run dev
+```
+
+This doesn't give you named URLs or prevent port conflicts, but works in Safari without any configuration.

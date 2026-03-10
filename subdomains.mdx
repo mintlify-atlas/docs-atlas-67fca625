@@ -1,0 +1,386 @@
+---
+title: Subdomains
+description: Organizing services with subdomains and wildcard routing
+---
+
+## Using Subdomains
+
+Subdomains let you organize multiple related services under a common parent domain:
+
+```bash
+portless myapp next dev
+# -> http://myapp.localhost:1355
+
+portless api.myapp pnpm start
+# -> http://api.myapp.localhost:1355
+
+portless docs.myapp vite dev
+# -> http://docs.myapp.localhost:1355
+```
+
+Each service gets its own URL, but they share a common namespace (`myapp.localhost`).
+
+## Wildcard Subdomain Routing
+
+Portless automatically routes wildcard subdomains to the longest matching registered route.
+
+### How It Works
+
+<Steps>
+
+### Register a route
+
+```bash
+portless myapp next dev
+# Registers: myapp.localhost -> port 4123
+```
+
+### Access any subdomain
+
+```bash
+# All of these route to the same app:
+http://myapp.localhost:1355
+http://tenant1.myapp.localhost:1355
+http://tenant2.myapp.localhost:1355
+http://anything.myapp.localhost:1355
+```
+
+</Steps>
+
+### Routing Priority
+
+Portless matches routes with the following priority:
+
+1. **Exact match**: `api.myapp.localhost` matches `api.myapp.localhost` (if registered)
+2. **Wildcard match**: `tenant1.api.myapp.localhost` matches `api.myapp.localhost`
+3. **Longer suffix match**: If both `myapp.localhost` and `api.myapp.localhost` are registered, `tenant1.api.myapp.localhost` routes to `api.myapp.localhost` (longer suffix wins)
+
+<CodeGroup>
+
+```typescript proxy.ts
+function findRoute(
+  routes: { hostname: string; port: number }[],
+  host: string
+): { hostname: string; port: number } | undefined {
+  return (
+    // 1. Exact match first
+    routes.find((r) => r.hostname === host) ||
+    // 2. Wildcard match (longest suffix)
+    routes.find((r) => host.endsWith("." + r.hostname))
+  );
+}
+```
+
+</CodeGroup>
+
+## Multi-Tenant Applications
+
+Wildcard routing is ideal for multi-tenant apps where each tenant gets their own subdomain:
+
+```bash
+portless myapp next dev
+# -> http://myapp.localhost:1355
+
+# Tenants access via their subdomain:
+# http://acme.myapp.localhost:1355
+# http://globex.myapp.localhost:1355
+# http://initech.myapp.localhost:1355
+```
+
+Your app can extract the tenant ID from the `Host` header:
+
+<CodeGroup>
+
+```typescript Next.js
+import { headers } from "next/headers";
+
+export default function Page() {
+  const host = headers().get("host") || "";
+  const tenant = host.split(".")[0];
+  
+  return <div>Welcome, {tenant}!</div>;
+}
+```
+
+```typescript Express
+app.get("/", (req, res) => {
+  const host = req.headers.host || "";
+  const tenant = host.split(".")[0];
+  
+  res.send(`Welcome, ${tenant}!`);
+});
+```
+
+</CodeGroup>
+
+## Monorepo Service Organization
+
+In a monorepo, use subdomains to namespace services:
+
+<CodeGroup>
+
+```json package.json (frontend)
+{
+  "name": "@monorepo/frontend",
+  "scripts": {
+    "dev": "portless frontend.myapp next dev"
+  }
+}
+```
+
+```json package.json (api)
+{
+  "name": "@monorepo/api",
+  "scripts": {
+    "dev": "portless api.myapp pnpm start"
+  }
+}
+```
+
+```json package.json (docs)
+{
+  "name": "@monorepo/docs",
+  "scripts": {
+    "dev": "portless docs.myapp vite dev"
+  }
+}
+```
+
+</CodeGroup>
+
+Now you have:
+
+- Frontend: `http://frontend.myapp.localhost:1355`
+- API: `http://api.myapp.localhost:1355`
+- Docs: `http://docs.myapp.localhost:1355`
+
+<Info>
+You can also use `portless run` to infer the service name from `package.json`. If you set `"name": "frontend"`, then `portless run next dev` will automatically use `frontend.localhost` as the hostname.
+</Info>
+
+## Cross-Service Communication
+
+When one service needs to call another, use the portless URL:
+
+<CodeGroup>
+
+```typescript Frontend (Next.js)
+// app/page.tsx
+export default async function Page() {
+  // Call the API service
+  const res = await fetch("http://api.myapp.localhost:1355/users");
+  const users = await res.json();
+  
+  return <UserList users={users} />;
+}
+```
+
+```typescript Frontend (Vite)
+// vite.config.ts
+export default defineConfig({
+  server: {
+    proxy: {
+      "/api": {
+        target: "http://api.myapp.localhost:1355",
+        changeOrigin: true,  // IMPORTANT: Rewrites Host header
+        rewrite: (path) => path.replace(/^\/api/, ""),
+      },
+    },
+  },
+});
+```
+
+</CodeGroup>
+
+<Note>
+When proxying between portless apps, **always set `changeOrigin: true`**. Without it, the proxy forwards the original `Host` header, causing portless to route the request back to the frontend in an infinite loop.
+
+Portless detects this and responds with `508 Loop Detected` along with a helpful error message.
+</Note>
+
+## Environment-Specific URLs
+
+Use the `PORTLESS_URL` environment variable to reference the current service's URL:
+
+<CodeGroup>
+
+```typescript Next.js
+// next.config.js
+module.exports = {
+  env: {
+    NEXT_PUBLIC_API_URL: process.env.PORTLESS_URL + "/api",
+  },
+};
+```
+
+```bash Shell
+# Get a service URL for use in scripts
+BACKEND_URL=$(portless get backend)
+curl $BACKEND_URL/health
+```
+
+</CodeGroup>
+
+## Combining Subdomains with Worktrees
+
+Subdomains and worktree prefixes compose naturally:
+
+```bash
+# Main worktree (main branch)
+cd ~/monorepo
+portless frontend.myapp pnpm dev
+# -> http://frontend.myapp.localhost:1355
+portless api.myapp pnpm start
+# -> http://api.myapp.localhost:1355
+
+# Worktree (feature/auth branch)
+cd ~/worktrees/monorepo-auth
+portless frontend.myapp pnpm dev
+# -> http://auth.frontend.myapp.localhost:1355
+portless api.myapp pnpm start
+# -> http://auth.api.myapp.localhost:1355
+```
+
+The worktree prefix (`auth`) is prepended to the full service name.
+
+## DNS Label Length Limit
+
+DNS labels (the parts between dots) are limited to **63 characters** per RFC 1035.
+
+Portless automatically truncates long labels and appends a hash suffix for uniqueness:
+
+<CodeGroup>
+
+```typescript auto.ts
+export function truncateLabel(label: string): string {
+  if (label.length <= MAX_DNS_LABEL_LENGTH) return label;
+  
+  // 6-char hex hash from the full label for uniqueness
+  const hash = createHash("sha256").update(label).digest("hex").slice(0, 6);
+  
+  // Reserve space for "-" separator + 6-char hash = 7 chars
+  const maxPrefixLength = MAX_DNS_LABEL_LENGTH - 7;
+  const prefix = label.slice(0, maxPrefixLength).replace(/-+$/, "");
+  
+  return `${prefix}-${hash}`;
+}
+```
+
+</CodeGroup>
+
+**Example:**
+
+```bash
+portless this-is-a-very-long-service-name-that-exceeds-the-dns-label-limit next dev
+# -> http://this-is-a-very-long-service-name-that-exceeds-the-dns-la-a1b2c3.localhost:1355
+```
+
+## Static Aliases for Non-Portless Services
+
+Use `portless alias` to register routes for services not managed by portless (e.g., Docker containers, databases):
+
+```bash
+# Register a PostgreSQL container
+portless alias postgres 5432
+# -> http://postgres.localhost:1355 routes to localhost:5432
+
+# Register a Redis container
+portless alias redis 6379
+# -> http://redis.localhost:1355 routes to localhost:6379
+
+# Remove an alias
+portless alias --remove postgres
+```
+
+Aliases show up in `portless list` with `(alias)` instead of a PID:
+
+```bash
+portless list
+# Active routes:
+#   http://myapp.localhost:1355  ->  localhost:4123  (pid 12345)
+#   http://postgres.localhost:1355  ->  localhost:5432  (alias)
+```
+
+## Subdomain Naming Best Practices
+
+### Use Short, Descriptive Names
+
+<CodeGroup>
+
+```bash Good
+portless api.myapp pnpm start
+portless docs.myapp vite dev
+portless admin.myapp next dev
+```
+
+```bash Avoid
+portless my-very-long-api-service-name.myapp pnpm start
+portless documentation-site.myapp vite dev
+```
+
+</CodeGroup>
+
+### Group Related Services
+
+<CodeGroup>
+
+```bash Good (grouped by domain)
+portless frontend.myapp next dev
+portless api.myapp pnpm start
+portless admin.myapp next dev
+```
+
+```bash Avoid (flat namespace)
+portless myapp-frontend next dev
+portless myapp-api pnpm start
+portless myapp-admin next dev
+```
+
+</CodeGroup>
+
+### Use Consistent Naming
+
+<CodeGroup>
+
+```bash Good (consistent)
+portless frontend.myapp next dev
+portless backend.myapp pnpm start
+```
+
+```bash Avoid (inconsistent)
+portless myapp-frontend next dev
+portless backend.myapp pnpm start
+```
+
+</CodeGroup>
+
+## Wildcard Routing Edge Cases
+
+### Deep Nesting
+
+Wildcard routing works at any depth:
+
+```bash
+portless myapp next dev
+# Registers: myapp.localhost
+
+# All of these route to the same app:
+http://a.myapp.localhost:1355
+http://a.b.myapp.localhost:1355
+http://a.b.c.myapp.localhost:1355
+```
+
+### Overlapping Routes
+
+If you register multiple overlapping routes, the longest suffix wins:
+
+```bash
+portless myapp next dev          # port 4123
+portless api.myapp pnpm start    # port 4567
+
+# Routing:
+http://myapp.localhost:1355           -> 4123 (exact match)
+http://api.myapp.localhost:1355       -> 4567 (exact match)
+http://tenant.myapp.localhost:1355    -> 4123 (wildcard: *.myapp.localhost)
+http://tenant.api.myapp.localhost:1355 -> 4567 (wildcard: *.api.myapp.localhost)
+```

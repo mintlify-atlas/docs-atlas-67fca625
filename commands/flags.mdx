@@ -1,0 +1,260 @@
+---
+title: "CLI Flags"
+description: "Complete reference for all CLI flags"
+---
+
+## Global Flags
+
+These flags work with all commands:
+
+### `--help`, `-h`
+
+Show help information for a command.
+
+```bash
+portless --help              # General help
+portless run --help          # Help for 'run' command
+portless proxy --help        # Help for 'proxy' command
+```
+
+### `--version`, `-v`
+
+Show the installed version of Portless.
+
+```bash
+portless --version
+portless -v
+```
+
+## App Running Flags
+
+These flags work with `portless run` and `portless <name>` commands:
+
+### `--force`
+
+Override an existing route registered by another process.
+
+```bash
+portless run --force next dev
+portless myapp --force next dev
+```
+
+Without `--force`, you'll get an error if a route is already registered:
+```
+Error: Route "myapp" is already registered by PID 12345.
+```
+
+With `--force`, the old route is replaced with the new one.
+
+### `--app-port <number>`
+
+Use a fixed port for the app instead of automatic assignment (4000-4999 range).
+
+```bash
+portless run --app-port 3000 next dev
+portless myapp --app-port 8080 python -m http.server 8080
+```
+
+Port must be between 1 and 65535.
+
+Useful when:
+- Your app requires a specific port
+- You need to match a port in another config file
+- You're debugging port-related issues
+
+### `--name <name>`
+
+Force the use of a specific app name, bypassing subcommand dispatch. Useful for using reserved names.
+
+```bash
+portless --name run next dev        # Use "run" as the app name
+portless --name proxy node server.js  # Use "proxy" as the app name
+```
+
+Reserved names: `run`, `get`, `alias`, `hosts`, `list`, `trust`, `proxy`
+
+### `--`
+
+Stop flag parsing. Everything after `--` is passed directly to your command.
+
+```bash
+portless run -- next dev --turbo
+portless myapp -- vite --host 0.0.0.0
+```
+
+Useful when your command has flags that might conflict with Portless flags.
+
+## Proxy Flags
+
+These flags work with `portless proxy start`:
+
+### `--port <number>`, `-p <number>`
+
+Port for the proxy to listen on (1-65535).
+
+```bash
+portless proxy start -p 8080
+portless proxy start --port 3000
+```
+
+Ports below 1024 require sudo:
+```bash
+sudo portless proxy start -p 80
+sudo portless proxy start -p 443 --https
+```
+
+**Default**: 1355 (or value from `PORTLESS_PORT` environment variable)
+
+### `--https`
+
+Enable HTTP/2 with TLS using auto-generated certificates.
+
+```bash
+portless proxy start --https
+```
+
+On first run:
+1. Generates local CA
+2. Adds CA to system trust store (prompts for sudo on Linux)
+3. Generates wildcard certificate for `*.localhost`
+
+Browsers will trust certificates without warnings.
+
+### `--cert <path>`
+
+Path to a custom TLS certificate in PEM format. Must be used with `--key`. Implies `--https`.
+
+```bash
+portless proxy start --cert ./cert.pem --key ./key.pem
+```
+
+Certificate must start with `-----BEGIN CERTIFICATE-----`.
+
+### `--key <path>`
+
+Path to a custom TLS private key in PEM format. Must be used with `--cert`. Implies `--https`.
+
+```bash
+portless proxy start --cert ./cert.pem --key ./key.pem
+```
+
+Key must start with `-----BEGIN PRIVATE KEY-----` or similar.
+
+### `--no-tls`
+
+Disable HTTPS even if `PORTLESS_HTTPS` environment variable is set.
+
+```bash
+export PORTLESS_HTTPS=1
+portless proxy start --no-tls  # Overrides environment variable
+```
+
+### `--foreground`
+
+Run the proxy in the foreground instead of as a daemon. Useful for debugging.
+
+```bash
+portless proxy start --foreground
+```
+
+Logs print to stdout/stderr. Press Ctrl+C to stop.
+
+## Alias Flags
+
+These flags work with `portless alias`:
+
+### `--force`
+
+Override an existing route when creating an alias.
+
+```bash
+portless alias postgres 5432 --force
+```
+
+### `--remove`
+
+Remove an existing alias.
+
+```bash
+portless alias --remove postgres
+```
+
+## Get Flags
+
+These flags work with `portless get`:
+
+### `--no-worktree`
+
+Skip worktree prefix detection when generating the URL.
+
+```bash
+# In a git worktree on branch "auth"
+portless get backend
+# -> http://auth.backend.localhost:1355
+
+portless get backend --no-worktree
+# -> http://backend.localhost:1355 (skips "auth" prefix)
+```
+
+## Flag Placement
+
+Flags can appear in different positions depending on the command:
+
+### Run Command
+
+```bash
+portless run --force --app-port 3000 next dev
+portless run next dev --force  # Error: --force not recognized after command
+```
+
+Flags must come before the command.
+
+### Named Mode
+
+```bash
+portless --force myapp next dev       # Before name
+portless myapp --force next dev       # After name
+portless myapp next dev --force       # After name
+```
+
+Flags can come before or after the app name, but before the command.
+
+### With `--`
+
+```bash
+portless run --force -- next dev --turbo
+portless myapp -- next dev --experimental-https
+```
+
+Everything after `--` is passed to your command untouched.
+
+## Examples
+
+### Multiple Flags
+
+```bash
+# App running with force and fixed port
+portless run --force --app-port 3000 next dev
+
+# Proxy with custom port and HTTPS
+sudo portless proxy start -p 443 --https
+
+# Proxy with custom certs
+portless proxy start --cert ./cert.pem --key ./key.pem
+```
+
+### Flag Conflicts
+
+```bash
+# --https and --no-tls conflict (--no-tls wins)
+portless proxy start --https --no-tls  # Starts without TLS
+
+# --cert/--key implies --https (--no-tls has no effect)
+portless proxy start --cert ./cert.pem --key ./key.pem --no-tls  # Still uses TLS
+```
+
+## See Also
+
+- [Environment Variables](/commands/environment) - Configure defaults for flags
+- [portless run](/commands/run) - Run command reference
+- [portless proxy](/commands/proxy) - Proxy command reference

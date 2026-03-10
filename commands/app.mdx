@@ -1,0 +1,184 @@
+---
+title: "portless <name>"
+description: "Run an app with an explicit name"
+---
+
+## Overview
+
+Run your dev server through the Portless proxy with an explicit name. This gives you full control over the hostname.
+
+## Syntax
+
+```bash
+portless <name> [options] <command...>
+```
+
+## Parameters
+
+### `<name>`
+
+The hostname for your app. Can include subdomains separated by dots.
+
+- Simple name: `myapp` -> `http://myapp.localhost:1355`
+- Subdomain: `api.myapp` -> `http://api.myapp.localhost:1355`
+- Multi-level: `docs.api.myapp` -> `http://docs.api.myapp.localhost:1355`
+
+### `<command...>`
+
+The command to run (your dev server start command).
+
+## Options
+
+### `--force`
+
+Override an existing route registered by another process.
+
+```bash
+portless myapp --force next dev
+```
+
+### `--app-port <number>`
+
+Use a fixed port for the app instead of automatic port assignment. Must be between 1 and 65535.
+
+```bash
+portless myapp --app-port 3000 pnpm start
+```
+
+### `--`
+
+Stop flag parsing. Everything after `--` is passed directly to your command.
+
+```bash
+portless myapp -- next dev --turbo
+```
+
+## Examples
+
+### Basic Usage
+
+```bash
+# Simple app name
+portless myapp next dev
+# -> http://myapp.localhost:1355
+
+# With subdomain
+portless api.myapp pnpm start
+# -> http://api.myapp.localhost:1355
+
+# Multiple subdomains
+portless v2.api.myapp node server.js
+# -> http://v2.api.myapp.localhost:1355
+```
+
+### Monorepo Services
+
+```bash
+# Frontend
+portless web next dev
+# -> http://web.localhost:1355
+
+# API
+portless api node src/index.js
+# -> http://api.localhost:1355
+
+# Admin panel
+portless admin vite dev
+# -> http://admin.localhost:1355
+```
+
+### With Fixed Port
+
+```bash
+portless myapp --app-port 8080 python -m http.server 8080
+# -> http://myapp.localhost:1355 (proxies to localhost:8080)
+```
+
+### Override Existing Route
+
+```bash
+# Replace route even if another process owns it
+portless myapp --force next dev
+```
+
+### Flags After Name
+
+You can place `--force` and `--app-port` before or after the name:
+
+```bash
+portless --force myapp next dev
+portless myapp --force next dev
+# Both work the same
+```
+
+## Reserved Names
+
+The following names are reserved for Portless commands and cannot be used directly:
+
+- `run`
+- `get`
+- `alias`
+- `hosts`
+- `list`
+- `trust`
+- `proxy`
+
+To use a reserved name, either:
+
+1. Use `portless run` (it will infer from your project)
+2. Use the `--name` flag: `portless --name run next dev`
+
+## Environment Variables
+
+The following environment variables are injected into your command:
+
+- **`PORT`** - Ephemeral port the app should listen on (e.g. 4567)
+- **`HOST`** - Always set to `127.0.0.1`
+- **`PORTLESS_URL`** - Public URL of your app (e.g. `http://myapp.localhost:1355`)
+- **`__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS`** - Set to `.localhost` for Vite compatibility
+
+## Wildcard Subdomains
+
+Any subdomain of a registered route routes automatically without extra configuration:
+
+```bash
+# Register myapp
+portless myapp next dev
+
+# All of these automatically route to myapp:
+# - http://myapp.localhost:1355
+# - http://tenant1.myapp.localhost:1355
+# - http://tenant2.myapp.localhost:1355
+# - http://any.subdomain.myapp.localhost:1355
+```
+
+This is useful for multi-tenant apps where each tenant gets a subdomain.
+
+## Proxy Auto-Start
+
+If the proxy is not running, the command will automatically start it:
+
+- **Privileged port** (< 1024): Prompts for sudo permission
+- **Non-privileged port** (default 1355): Starts silently without sudo
+
+You can skip the proxy auto-start by responding with `skip` when prompted.
+
+## Skip Portless
+
+To run your command directly without the proxy:
+
+```bash
+PORTLESS=0 portless myapp next dev
+# or
+PORTLESS=skip portless myapp next dev
+```
+
+## Framework Support
+
+Most frameworks respect the `PORT` environment variable. For frameworks that don't (Vite, Astro, React Router, Angular, Expo, React Native), Portless automatically injects the correct `--port` and `--host` flags.
+
+## Exit Codes
+
+- **0** - Success
+- **1** - Error (no command provided, route conflict, invalid arguments)
+- **Exit code of child process** - Propagated from your dev server

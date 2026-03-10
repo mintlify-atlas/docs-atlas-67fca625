@@ -1,0 +1,241 @@
+---
+title: "portless alias"
+description: "Register static routes for external services"
+---
+
+## Overview
+
+The `alias` command registers static routes for services not managed by Portless, such as Docker containers, databases, or external servers. Unlike routes created by `portless run` or `portless <name>`, aliases are not tied to a process and persist until explicitly removed.
+
+## Syntax
+
+```bash
+# Register an alias
+portless alias <name> <port>
+
+# Register with force
+portless alias <name> <port> --force
+
+# Remove an alias
+portless alias --remove <name>
+```
+
+## Parameters
+
+### `<name>`
+
+The hostname for the service. Can include subdomains separated by dots.
+
+### `<port>`
+
+The local port where the service is listening. Must be between 1 and 65535.
+
+## Options
+
+### `--force`
+
+Override an existing route with the same name.
+
+```bash
+portless alias postgres 5432 --force
+```
+
+### `--remove`
+
+Remove an existing alias.
+
+```bash
+portless alias --remove postgres
+```
+
+### `--help`, `-h`
+
+Show help for the `alias` command.
+
+```bash
+portless alias --help
+```
+
+## Examples
+
+### Docker Services
+
+```bash
+# PostgreSQL container running on port 5432
+portless alias postgres 5432
+# -> http://postgres.localhost:1355
+
+# Redis container on port 6379
+portless alias redis 6379
+# -> http://redis.localhost:1355
+
+# MongoDB on port 27017
+portless alias mongo 27017
+# -> http://mongo.localhost:1355
+```
+
+### External APIs
+
+```bash
+# Mock API server on port 8080
+portless alias mockapi 8080
+# -> http://mockapi.localhost:1355
+
+# Legacy backend on port 3001
+portless alias legacy-api 3001
+# -> http://legacy-api.localhost:1355
+```
+
+### With Subdomains
+
+```bash
+# Database for specific project
+portless alias db.myapp 5432
+# -> http://db.myapp.localhost:1355
+
+# Cache service
+portless alias cache.myapp 6379
+# -> http://cache.myapp.localhost:1355
+```
+
+### Override Existing Route
+
+```bash
+# Replace existing route
+portless alias postgres 5433 --force
+```
+
+### Remove Aliases
+
+```bash
+# Remove single alias
+portless alias --remove postgres
+
+# Remove multiple (run separately)
+portless alias --remove redis
+portless alias --remove mongo
+```
+
+## Use Cases
+
+### Docker Compose
+
+If you have services defined in `docker-compose.yml` with port mappings:
+
+```yaml
+services:
+  postgres:
+    image: postgres:15
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+```
+
+Register them with Portless:
+
+```bash
+portless alias postgres 5432
+portless alias redis 6379
+```
+
+Now your app can connect to `http://postgres.localhost:1355` and `http://redis.localhost:1355`.
+
+### Static Mock Server
+
+Run a mock API server separately, then alias it:
+
+```bash
+# Start mock server
+json-server --port 8080 db.json &
+
+# Register with Portless
+portless alias mockapi 8080
+
+# Access at http://mockapi.localhost:1355
+```
+
+### Microservices in Monorepo
+
+If you have services that run independently but need stable URLs:
+
+```bash
+# Service 1 always uses port 4001
+portless alias auth 4001
+
+# Service 2 always uses port 4002
+portless alias api 4002
+
+# Service 3 always uses port 4003
+portless alias frontend 4003
+```
+
+## Aliases vs Regular Routes
+
+| Feature | Regular Route (`portless <name>`) | Alias (`portless alias`) |
+|---------|-----------------------------------|-------------------------|
+| Process tracking | Yes (PID stored) | No (PID is 0) |
+| Auto-cleanup | Yes (when process exits) | No (persists until removed) |
+| Port assignment | Automatic (4000-4999) | Manual (you specify) |
+| Use case | Dev servers | Docker, databases, static services |
+
+## Listing Aliases
+
+Aliases appear in `portless list` with `(alias)` label:
+
+```bash
+portless list
+```
+
+Output:
+```
+Active routes:
+
+  http://postgres.localhost:1355  ->  localhost:5432  (alias)
+  http://myapp.localhost:1355     ->  localhost:4123  (pid 12345)
+```
+
+## Errors
+
+### Missing Arguments
+
+```bash
+portless alias myservice
+# Error: Missing arguments.
+# Usage:
+#   portless alias <name> <port>
+```
+
+### Invalid Port
+
+```bash
+portless alias myservice abc
+# Error: Invalid port "abc". Must be 1-65535.
+```
+
+### Alias Not Found
+
+```bash
+portless alias --remove nonexistent
+# Error: No alias found for "nonexistent".
+```
+
+### Route Conflict
+
+If a route already exists (either from another process or another alias), use `--force`:
+
+```bash
+portless alias myapp 8080
+# Error: Route "myapp" is already registered by PID 12345.
+
+# Override it
+portless alias myapp 8080 --force
+```
+
+## Exit Codes
+
+- **0** - Success
+- **1** - Error (invalid arguments, alias not found, route conflict without --force)

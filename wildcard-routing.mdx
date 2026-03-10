@@ -1,0 +1,391 @@
+---
+title: "Wildcard Routing"
+description: "Route any subdomain to a registered app without additional configuration"
+---
+
+## Overview
+
+Portless automatically routes wildcard subdomains to their parent route. Once you register an app (e.g., `myapp`), **any subdomain** of that app routes to it automatically without extra configuration.
+
+This is especially useful for:
+- Multi-tenant applications
+- Dynamic preview environments  
+- Per-user subdomains
+- Testing subdomain-based features locally
+
+## How It Works
+
+When portless receives a request, it:
+
+1. **Checks for exact hostname match** - If `myapp.localhost` is registered, it matches first
+2. **Falls back to wildcard matching** - If no exact match, checks if the hostname ends with `.` + a registered route
+3. **Routes to the parent** - `tenant1.myapp.localhost` routes to the app registered at `myapp.localhost`
+
+<Note>
+You only register the **base name** once. All subdomains work automatically.
+</Note>
+
+## Quick Example
+
+```bash
+# Register one app
+portless myapp next dev
+# -> Registered at: http://myapp.localhost:1355
+
+# These ALL route to the same app automatically:
+# http://tenant1.myapp.localhost:1355
+# http://tenant2.myapp.localhost:1355  
+# http://user-alice.myapp.localhost:1355
+# http://preview-123.myapp.localhost:1355
+# http://any.subdomain.myapp.localhost:1355
+```
+
+No extra registration needed. The app sees the full hostname in the `Host` header and can route internally.
+
+## Multi-Tenant Applications
+
+### Setup
+
+<Steps>
+  <Step title="Register your app once">
+    ```bash
+    portless myapp pnpm start
+    ```
+  </Step>
+
+  <Step title="Access different tenants">
+    Each tenant gets a unique subdomain:
+    ```
+    http://acme.myapp.localhost:1355
+    http://widgets-inc.myapp.localhost:1355
+    http://demo.myapp.localhost:1355
+    ```
+  </Step>
+
+  <Step title="Handle routing in your app">
+    Your app reads the `Host` header to determine the tenant:
+    ```javascript
+    const host = req.headers.host; // "acme.myapp.localhost:1355"
+    const subdomain = host.split('.')[0]; // "acme"
+    ```
+  </Step>
+</Steps>
+
+### Express Example
+
+```javascript
+import express from 'express';
+
+const app = express();
+
+// Middleware to extract tenant from subdomain
+app.use((req, res, next) => {
+  const host = req.headers.host || '';
+  const subdomain = host.split('.')[0];
+  
+  // Base domain (myapp.localhost)
+  if (subdomain === 'myapp') {
+    req.tenant = null;
+  } else {
+    req.tenant = subdomain;
+  }
+  
+  next();
+});
+
+// Routes can now use req.tenant
+app.get('/', (req, res) => {
+  if (req.tenant) {
+    res.send(`Welcome to ${req.tenant}'s dashboard`);
+  } else {
+    res.send('Welcome to the main app');
+  }
+});
+
+app.listen(process.env.PORT || 3000);
+```
+
+### Next.js Example
+
+```typescript middleware.ts
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+
+export function middleware(request: NextRequest) {
+  const host = request.headers.get('host') || '';
+  const subdomain = host.split('.')[0];
+  
+  // Rewrite based on subdomain
+  if (subdomain !== 'myapp') {
+    // Rewrite to tenant-specific path
+    const url = request.nextUrl.clone();
+    url.pathname = `/tenants/${subdomain}${url.pathname}`;
+    return NextResponse.rewrite(url);
+  }
+  
+  return NextResponse.next();
+}
+```
+
+## Dynamic Preview Environments
+
+Wildcard routing is perfect for branch-based or PR-based preview URLs:
+
+```bash
+# Main branch
+portless myapp next dev
+# -> http://myapp.localhost:1355
+
+# Preview for PR #42
+portless pr-42.myapp next dev --port 4042
+# -> http://pr-42.myapp.localhost:1355
+
+# Feature branch
+portless auth-v2.myapp next dev --port 4043  
+# -> http://auth-v2.myapp.localhost:1355
+```
+
+<Tip>
+Combine with [git worktrees](/git-worktrees) for automatic subdomain prefixes based on branch names.
+</Tip>
+
+## Per-User Subdomains
+
+Build GitHub-style user pages or per-user dashboards:
+
+```bash
+# Register once
+portless usersite pnpm dev
+
+# Access as different users
+# http://alice.usersite.localhost:1355
+# http://bob.usersite.localhost:1355
+# http://charlie.usersite.localhost:1355
+```
+
+Your app extracts the username from the subdomain and serves personalized content.
+
+## Real-World Examples
+
+### SaaS Application with Tenant Isolation
+
+<CodeGroup>
+```bash Terminal
+# Register app once
+portless saas-app pnpm start
+
+# Each customer gets their own subdomain
+# http://customer-a.saas-app.localhost:1355
+# http://customer-b.saas-app.localhost:1355
+```
+
+```typescript app.ts
+import express from 'express';
+import { getTenantConfig } from './db';
+
+const app = express();
+
+app.use(async (req, res, next) => {
+  const subdomain = req.headers.host?.split('.')[0];
+  
+  if (subdomain && subdomain !== 'saas-app') {
+    req.tenantConfig = await getTenantConfig(subdomain);
+  }
+  
+  next();
+});
+
+app.get('/dashboard', (req, res) => {
+  const { tenantConfig } = req;
+  res.render('dashboard', { config: tenantConfig });
+});
+```
+</CodeGroup>
+
+### Localization Testing
+
+```bash
+# Register once
+portless shop pnpm dev
+
+# Test different locales via subdomains
+# http://en.shop.localhost:1355
+# http://fr.shop.localhost:1355  
+# http://de.shop.localhost:1355
+```
+
+### Microservices with Per-Service Subdomains
+
+```bash
+# Register each service
+portless myapp next dev          # Frontend
+portless api.myapp node server.js   # Explicit API subdomain
+
+# Wildcard routing handles:
+# http://myapp.localhost:1355        -> Frontend
+# http://api.myapp.localhost:1355    -> API (explicit route takes precedence)
+# http://v2.api.myapp.localhost:1355 -> API (wildcard match to api.myapp)
+```
+
+<Note>
+**Exact matches take precedence over wildcards.** If you register both `myapp` and `api.myapp`, requests to `api.myapp.localhost` route to the explicit `api.myapp` registration, not the wildcard for `myapp`.
+</Note>
+
+## How Wildcard Matching Works
+
+### Matching Algorithm
+
+```typescript
+function findRoute(
+  routes: { hostname: string; port: number }[],
+  host: string
+): { hostname: string; port: number } | undefined {
+  // 1. Try exact match first
+  const exact = routes.find((r) => r.hostname === host);
+  if (exact) return exact;
+  
+  // 2. Fall back to wildcard (ends with "." + registered route)
+  return routes.find((r) => host.endsWith("." + r.hostname));
+}
+```
+
+### Priority Order
+
+1. **Exact hostname match** - `myapp.localhost` matches `myapp` registration
+2. **Longest wildcard match** - `api.myapp.localhost` matches `api.myapp` before `myapp`
+3. **404** - No match found
+
+<Warning>
+Wildcard matching uses `endsWith("." + hostname)`, so subdomains must include the full parent name. `tenant.myapp.localhost` matches `myapp.localhost`, but `tenantmyapp.localhost` does not.
+</Warning>
+
+## Headers and Request Context
+
+### X-Forwarded-* Headers
+
+Portless adds standard forwarding headers to every request:
+
+```http
+X-Forwarded-For: 127.0.0.1
+X-Forwarded-Proto: http
+X-Forwarded-Host: tenant1.myapp.localhost:1355
+X-Forwarded-Port: 1355
+```
+
+Your app can use these to reconstruct the original request URL:
+
+```javascript
+const proto = req.headers['x-forwarded-proto'];
+const host = req.headers['x-forwarded-host'];
+const url = `${proto}://${host}${req.url}`;
+// "http://tenant1.myapp.localhost:1355/dashboard"
+```
+
+### Host Header
+
+The `Host` header is **not rewritten** - your app receives the full subdomain:
+
+```javascript
+req.headers.host // "tenant1.myapp.localhost:1355"
+```
+
+This preserves the original request context and allows your app to route based on the subdomain.
+
+## Combining with Static Routes
+
+You can mix wildcard routing with [static routes](/static-routes) for external services:
+
+```bash
+# Register your app
+portless myapp next dev
+
+# Add static route for a Docker container
+portless alias db.myapp 5432
+
+# Routes:
+# http://myapp.localhost:1355        -> Your app
+# http://tenant1.myapp.localhost:1355 -> Your app (wildcard)
+# http://db.myapp.localhost:1355     -> Docker container on :5432 (static)
+```
+
+Static routes take precedence over wildcards because they create exact hostname matches.
+
+## Limitations
+
+### Safari and .localhost DNS
+
+Safari relies on system DNS resolution, which may not auto-resolve `.localhost` subdomains. If you see DNS errors:
+
+```bash
+sudo portless hosts sync
+```
+
+This adds all active routes to `/etc/hosts`. See [Safari DNS](/safari-dns) for details.
+
+### HTTPS and Wildcards
+
+When using HTTPS, portless generates per-hostname certificates on-demand via SNI (Server Name Indication). The first request to a new subdomain triggers certificate generation, which takes ~100ms.
+
+Subsequent requests to the same subdomain use the cached certificate. See [HTTPS & HTTP/2](/https) for details.
+
+### No Deep Wildcard Nesting
+
+Wildcard matching is simple suffix-based. If you register `myapp`, these work:
+- `sub.myapp.localhost` ✓
+- `deep.sub.myapp.localhost` ✓
+- `any.depth.works.myapp.localhost` ✓
+
+But portless doesn't distinguish between levels - they all route to the same app at `myapp`.
+
+## Debugging
+
+### Check Active Routes
+
+```bash
+portless list
+```
+
+Outputs:
+```
+Active routes:
+  myapp.localhost:1355 -> :4123
+  api.myapp.localhost:1355 -> :4124
+```
+
+### Test with curl
+
+```bash
+# Exact match
+curl -H "Host: myapp.localhost" http://localhost:1355
+
+# Wildcard match  
+curl -H "Host: tenant1.myapp.localhost" http://localhost:1355
+
+# Should get 404
+curl -H "Host: nonexistent.localhost" http://localhost:1355
+```
+
+### Proxy Logs
+
+Run the proxy in foreground mode to see routing decisions:
+
+```bash
+portless proxy start --foreground
+```
+
+Requests are logged with the matched route and target port.
+
+## Use Cases Summary
+
+| Use Case | Example | Benefit |
+|----------|---------|----------|
+| **Multi-tenant SaaS** | `{tenant}.app.localhost` | Isolate customers with zero config |
+| **Preview environments** | `pr-{id}.app.localhost` | Test branches without port conflicts |
+| **Localization testing** | `{locale}.shop.localhost` | Switch languages via subdomain |
+| **Per-user pages** | `{username}.site.localhost` | GitHub-style user pages |
+| **API versioning** | `v{n}.api.localhost` | Test API versions side-by-side |
+| **Microservices** | `{service}.app.localhost` | Route to services by name |
+
+<Tip>
+Wildcard routing means you register once and forget. Your app handles the subdomain logic, and portless handles the routing.
+</Tip>

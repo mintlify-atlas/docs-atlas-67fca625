@@ -1,0 +1,192 @@
+---
+title: "portless trust"
+description: "Add local CA to system trust store"
+---
+
+## Overview
+
+The `trust` command adds the Portless local Certificate Authority (CA) to your system's trust store. This eliminates browser warnings when using HTTPS with the `--https` flag.
+
+## Syntax
+
+```bash
+portless trust
+
+# On Linux (may require sudo)
+sudo portless trust
+```
+
+## When to Use
+
+You need to run `portless trust` if:
+
+1. You're using `portless proxy start --https`
+2. You see browser certificate warnings
+3. You skipped the trust step when first starting the proxy with HTTPS
+
+## How It Works
+
+Portless generates a local CA certificate the first time you run `portless proxy start --https`. The `trust` command adds this CA to your system trust store so browsers recognize certificates signed by it.
+
+### macOS
+
+Adds the CA to the System keychain using the `security` command. Does not require sudo on macOS.
+
+### Linux
+
+Supports multiple distributions:
+
+- **Debian/Ubuntu**: Uses `update-ca-certificates`
+- **Arch**: Uses `update-ca-trust`
+- **Fedora/RHEL/CentOS**: Uses `update-ca-trust`
+- **openSUSE**: Uses `update-ca-certificates`
+
+Requires sudo on all Linux distributions.
+
+## Examples
+
+### Trust on macOS
+
+```bash
+portless trust
+```
+
+Output:
+```
+Local CA added to system trust store.
+Browsers will now trust portless HTTPS certificates.
+```
+
+### Trust on Linux
+
+```bash
+sudo portless trust
+```
+
+Output:
+```
+Local CA added to system trust store.
+Browsers will now trust portless HTTPS certificates.
+```
+
+### First-Time HTTPS Setup
+
+When you first start the proxy with `--https`, it prompts to add the CA:
+
+```bash
+portless proxy start --https
+```
+
+Output:
+```
+Ensuring TLS certificates...
+Generated local CA certificate.
+Adding CA to system trust store...
+CA added to system trust store. Browsers will trust portless certs.
+HTTPS/2 proxy started on port 1355
+```
+
+If you skip this step, run `portless trust` later:
+
+```bash
+portless trust
+```
+
+### Check if CA is Trusted
+
+The CA trust status is checked automatically when starting the proxy. If not trusted, you'll see:
+
+```bash
+portless proxy start --https
+```
+
+Output:
+```
+Could not add CA to system trust store.
+Browsers will show certificate warnings. To fix this later, run:
+  portless trust
+```
+
+## Errors
+
+### Permission Denied (Linux)
+
+```bash
+portless trust
+```
+
+Output:
+```
+Failed to trust CA: Permission denied
+Run with sudo:
+  sudo portless trust
+```
+
+Solution: Run with sudo on Linux.
+
+### Unsupported System
+
+If your system doesn't support automatic CA trust:
+
+```bash
+portless trust
+```
+
+Output:
+```
+Failed to trust CA: Unsupported system
+```
+
+Solution: Manually import the CA certificate from `~/.portless/ca.pem` (or `/tmp/portless/ca.pem` for privileged ports) into your browser.
+
+## Manual Trust (Alternative)
+
+If automatic trust fails, you can manually import the CA:
+
+### Find the CA Certificate
+
+For default port (1355):
+```bash
+cat ~/.portless/ca.pem
+```
+
+For privileged port (e.g. 80):
+```bash
+cat /tmp/portless/ca.pem
+```
+
+### Import to Browser
+
+**Chrome/Edge**:
+1. Settings > Privacy and Security > Security > Manage certificates
+2. Authorities tab > Import
+3. Select `ca.pem`
+4. Check "Trust this certificate for identifying websites"
+
+**Firefox**:
+1. Settings > Privacy & Security > Certificates > View Certificates
+2. Authorities tab > Import
+3. Select `ca.pem`
+4. Check "Trust this CA to identify websites"
+
+**Safari**:
+1. Double-click `ca.pem` to add to Keychain
+2. Open Keychain Access
+3. Find "Portless Local CA"
+4. Double-click > Trust > Always Trust
+
+## Security Notes
+
+- The CA private key is stored locally in your state directory
+- The CA is only trusted on your machine
+- Certificates are valid for 825 days (maximum allowed by browsers)
+- The CA is automatically generated per state directory (port-specific)
+
+## Related Commands
+
+- [`portless proxy start --https`](/commands/proxy) - Start proxy with HTTPS
+
+## Exit Codes
+
+- **0** - Success (CA trusted)
+- **1** - Error (permission denied, unsupported system, CA not found)

@@ -1,0 +1,332 @@
+---
+title: "HTTPS & HTTP/2"
+description: "Enable HTTP/2 + HTTPS for faster dev server page loads with automatic certificate generation"
+---
+
+## Overview
+
+Portless supports HTTP/2 over TLS (HTTPS) to significantly speed up dev servers that serve many unbundled files. Browsers limit HTTP/1.1 to 6 connections per host, which bottlenecks dev servers like Vite, Nuxt, and others. HTTP/2 multiplexes all requests over a single connection, eliminating this bottleneck.
+
+Portless automatically generates and manages TLS certificates using a local Certificate Authority (CA), and can trust them in your system keychain on first run.
+
+## Quick Start
+
+<Steps>
+  <Step title="Start proxy with HTTPS">
+    ```bash
+    portless proxy start --https
+    ```
+    
+    On first run, portless will prompt for sudo once to add the CA to your system trust store. After that, no more prompts and no browser warnings.
+  </Step>
+
+  <Step title="Access your apps securely">
+    All your portless apps now use HTTPS:
+    ```
+    https://myapp.localhost:1355
+    ```
+  </Step>
+</Steps>
+
+## How It Works
+
+When you start the proxy with `--https`, portless:
+
+1. **Generates a local CA** - Creates an elliptic curve (prime256v1) private key and self-signed CA certificate valid for 10 years
+2. **Generates server certificates** - Creates certificates signed by the CA for `localhost` and `*.localhost` (valid for 1 year)
+3. **Starts an HTTP/2 server** - Uses Node.js `http2.createSecureServer` with HTTP/1.1 fallback for WebSocket support
+4. **Handles SNI** - Generates per-hostname certificates on-demand for subdomains
+
+<Note>
+Portless uses **Server Name Indication (SNI)** to generate certificates on-demand. Each subdomain (like `myapp.localhost`, `api.myapp.localhost`) gets its own certificate because `*.localhost` sits at the public-suffix boundary and TLS specs don't permit wildcard certificates there (RFC 2606 §2).
+</Note>
+
+## Certificate Management
+
+### Automatic Generation
+
+Certificates are stored in your state directory:
+- **Port < 1024** (sudo mode): `/tmp/portless/`
+- **Port >= 1024** (user mode): `~/.portless/`
+
+Files created:
+```
+ca-key.pem          # CA private key (mode 0600)
+ca.pem              # CA certificate (mode 0644)
+server-key.pem      # Server private key
+server.pem          # Server certificate
+host-certs/         # Per-hostname certificates (generated on-demand)
+```
+
+### Automatic Renewal
+
+Portless checks certificate validity on startup and automatically regenerates:
+- Expired certificates
+- Certificates expiring within 7 days
+- Certificates using weak signatures (SHA-1)
+
+### Trusting the CA
+
+If you skipped the sudo prompt on first run, trust the CA later:
+
+```bash
+sudo portless trust
+```
+
+<Tip>
+On macOS, `portless trust` adds the CA to your login keychain. On Linux, it copies the CA to your distro's trust store and runs the appropriate update command.
+</Tip>
+
+#### Supported Linux Distributions
+
+| Distribution | CA Directory | Update Command |
+|-------------|-------------|----------------|
+| Debian/Ubuntu | `/usr/local/share/ca-certificates` | `update-ca-certificates` |
+| Arch | `/etc/ca-certificates/trust-source/anchors` | `update-ca-trust` |
+| Fedora/RHEL/CentOS | `/etc/pki/ca-trust/source/anchors` | `update-ca-trust` |
+| openSUSE | `/etc/pki/trust/anchors` | `update-ca-certificates` |
+
+## Configuration
+
+### Using Environment Variables
+
+Make HTTPS permanent by setting an environment variable:
+
+```bash
+# Add to .bashrc or .zshrc
+export PORTLESS_HTTPS=1
+
+# Now HTTPS is enabled by default
+portless proxy start
+```
+
+<CodeGroup>
+```bash .bashrc / .zshrc
+export PORTLESS_HTTPS=1
+```
+
+```bash .env
+PORTLESS_HTTPS=true
+```
+</CodeGroup>
+
+### Disabling HTTPS
+
+If `PORTLESS_HTTPS` is set but you want to disable it for a specific session:
+
+```bash
+portless proxy start --no-tls
+```
+
+### Using Custom Certificates
+
+If you already have certificates (e.g., from [mkcert](https://github.com/FiloSottile/mkcert)):
+
+```bash
+portless proxy start --cert ./cert.pem --key ./key.pem
+```
+
+<Note>
+Using `--cert` and `--key` automatically implies `--https`. You don't need to specify both.
+</Note>
+
+## Real-World Examples
+
+### Development Workflow
+
+<CodeGroup>
+```bash Terminal
+# Enable HTTPS globally
+export PORTLESS_HTTPS=1
+
+# Start proxy (HTTPS enabled automatically)
+portless proxy start
+
+# Run your apps - they automatically use HTTPS
+portless myapp next dev
+# -> https://myapp.localhost:1355
+
+portless api pnpm start
+# -> https://api.myapp.localhost:1355
+```
+
+```json package.json
+{
+  "scripts": {
+    "dev": "portless run next dev"
+  }
+}
+```
+</CodeGroup>
+
+### Port 443 (No Port in URL)
+
+Run on the standard HTTPS port to eliminate the port number from URLs:
+
+```bash
+sudo portless proxy start --https -p 443
+```
+
+Access apps at:
+```
+https://myapp.localhost
+https://api.myapp.localhost
+```
+
+<Warning>
+Ports below 1024 require sudo. The proxy will run as root, and state files move to `/tmp/portless` (shared between root and user processes).
+</Warning>
+
+### Mixed HTTP/HTTPS
+
+The proxy supports both HTTP and HTTPS connections simultaneously when started with `--https`. It inspects the first byte of each connection:
+- **0x16** (TLS ClientHello) → routes to HTTP/2 server
+- **Other** → routes to HTTP/1.1 server
+
+This means you can access apps via both:
+```bash
+http://myapp.localhost:1355   # HTTP/1.1
+https://myapp.localhost:1355  # HTTP/2 + TLS
+```
+
+## Environment Variables
+
+Portless injects these variables into child processes:
+
+```bash
+PORT=4123                              # Ephemeral port the app should listen on
+HOST=127.0.0.1                        # Bind address
+PORTLESS_URL=https://myapp.localhost:1355  # Public URL (uses https:// when TLS enabled)
+```
+
+## Troubleshooting
+
+### Browser Shows Certificate Warning
+
+The CA isn't trusted yet. Run:
+```bash
+sudo portless trust
+```
+
+### Permission Denied on Linux
+
+Make sure you're running with sudo:
+```bash
+sudo portless trust
+```
+
+### Safari Not Loading HTTPS
+
+Safari relies on the system DNS resolver. If you see certificate errors:
+
+1. Trust the CA:
+   ```bash
+   sudo portless trust
+   ```
+
+2. Add routes to `/etc/hosts`:
+   ```bash
+   sudo portless hosts sync
+   ```
+
+### Certificate Expired
+
+Portless automatically regenerates expired certificates on startup. If you see an expired certificate:
+
+1. Stop the proxy:
+   ```bash
+   portless proxy stop
+   ```
+
+2. Start with HTTPS:
+   ```bash
+   portless proxy start --https
+   ```
+
+Certificates are valid for:
+- **CA**: 10 years
+- **Server certs**: 1 year
+- **Auto-renewal**: 7 days before expiry
+
+### OpenSSL Not Found
+
+Portless requires `openssl` to generate certificates. It ships with macOS and most Linux distributions. If it's missing:
+
+<CodeGroup>
+```bash Debian/Ubuntu
+sudo apt-get install openssl
+```
+
+```bash Fedora/RHEL
+sudo dnf install openssl
+```
+
+```bash Arch
+sudo pacman -S openssl
+```
+</CodeGroup>
+
+## Technical Details
+
+### Certificate Specifications
+
+**CA Certificate:**
+- Algorithm: ECDSA with prime256v1 curve
+- Signature: SHA-256
+- Validity: 10 years
+- Extensions:
+  - `basicConstraints=critical,CA:TRUE`
+  - `keyUsage=critical,keyCertSign,cRLSign`
+
+**Server Certificates:**
+- Algorithm: ECDSA with prime256v1 curve  
+- Signature: SHA-256
+- Validity: 1 year
+- Extensions:
+  - `basicConstraints=CA:FALSE`
+  - `keyUsage=digitalSignature,keyEncipherment`
+  - `extendedKeyUsage=serverAuth`
+  - `subjectAltName=DNS:localhost,DNS:*.localhost` (default cert)
+  - Per-hostname certs include exact SAN + wildcard for same level
+
+### SNI (Server Name Indication)
+
+For each subdomain, portless generates a certificate with:
+- The exact hostname (e.g., `chat.myapp.localhost`)
+- A wildcard for siblings at the same level (e.g., `*.myapp.localhost`)
+
+This allows multiple subdomains to share a cached certificate while respecting TLS public-suffix boundary rules.
+
+### HTTP/2 + HTTP/1.1 Fallback
+
+Portless uses `http2.createSecureServer` with `allowHTTP1: true`, which:
+- Enables HTTP/2 multiplexing for regular requests
+- Falls back to HTTP/1.1 for WebSocket upgrades
+- Strips hop-by-hop headers (Connection, Transfer-Encoding, etc.) when proxying to HTTP/1.1 backends
+
+### State Directory
+
+Certificate location depends on proxy port:
+
+```bash
+# User mode (port >= 1024)
+~/.portless/
+  ca-key.pem
+  ca.pem
+  server-key.pem
+  server.pem
+  host-certs/
+
+# System mode (port < 1024, requires sudo)
+/tmp/portless/
+  ca-key.pem
+  ca.pem
+  server-key.pem  
+  server.pem
+  host-certs/
+```
+
+Override with:
+```bash
+export PORTLESS_STATE_DIR=/custom/path
+```

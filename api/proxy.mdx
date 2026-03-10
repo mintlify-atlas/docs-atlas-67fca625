@@ -1,0 +1,215 @@
+---
+title: "createProxyServer"
+description: "Create an HTTP/HTTPS proxy server with hostname-based routing"
+---
+
+## Function Signature
+
+```typescript
+function createProxyServer(options: ProxyServerOptions): ProxyServer
+```
+
+Creates an HTTP proxy server that routes requests based on the Host header. Returns a `ProxyServer` (either `http.Server` or `net.Server` when TLS is enabled).
+
+## Parameters
+
+<ParamField path="options" type="ProxyServerOptions" required>
+  Configuration object for the proxy server
+  
+  <Expandable title="ProxyServerOptions properties">
+    <ParamField path="getRoutes" type="() => RouteInfo[]" required>
+      Callback function invoked on every request to retrieve the current route table. This allows for dynamic routing - routes can be added or removed without restarting the server.
+      
+      ```typescript
+      getRoutes: () => store.loadRoutes()
+      ```
+    </ParamField>
+    
+    <ParamField path="proxyPort" type="number" required>
+      The port number the proxy server is listening on. Used to construct correct URLs in error pages and route listings.
+      
+      ```typescript
+      proxyPort: 8080
+      ```
+    </ParamField>
+    
+    <ParamField path="onError" type="(message: string) => void">
+      Optional error logger. Defaults to `console.error` if not provided. Called when proxy errors occur (connection failures, loops, etc.).
+      
+      ```typescript
+      onError: (msg) => console.error(`[proxy] ${msg}`)
+      ```
+    </ParamField>
+    
+    <ParamField path="tls" type="TLSOptions">
+      Optional TLS configuration. When provided, enables HTTP/2 over TLS (HTTPS) with HTTP/1.1 fallback.
+      
+      <Expandable title="TLS properties">
+        <ParamField path="cert" type="Buffer" required>
+          TLS certificate as a Buffer
+        </ParamField>
+        
+        <ParamField path="key" type="Buffer" required>
+          TLS private key as a Buffer
+        </ParamField>
+        
+        <ParamField path="SNICallback" type="Function">
+          Optional SNI (Server Name Indication) callback for per-hostname certificate selection.
+          
+          ```typescript
+          SNICallback: (servername, cb) => {
+            const ctx = getContextForHostname(servername);
+            cb(null, ctx);
+          }
+          ```
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Return Value
+
+<ResponseField name="ProxyServer" type="http.Server | net.Server">
+  Returns a Node.js server instance that can be started with `.listen()`. When TLS is enabled, returns a `net.Server` that wraps both HTTP/2 and HTTP/1.1 servers.
+</ResponseField>
+
+## Features
+
+### HTTP/2 Support
+
+When TLS configuration is provided, the proxy server automatically:
+- Enables HTTP/2 with multiplexing for better performance
+- Falls back to HTTP/1.1 for WebSocket connections
+- Accepts both plain HTTP and HTTPS on the same port
+
+### WebSocket Support
+
+The proxy transparently handles WebSocket upgrades:
+- Forwards the complete handshake including `Sec-WebSocket-Accept` headers
+- Preserves subprotocol negotiation
+- Maintains bidirectional streaming
+
+### Loop Detection
+
+The proxy automatically detects and prevents forwarding loops:
+- Tracks request hops using the `X-Portless-Hops` header
+- Rejects requests after 5 hops with HTTP 508
+- Provides helpful error messages suggesting `changeOrigin: true` for dev server proxies
+
+### Automatic Header Forwarding
+
+The proxy adds standard forwarding headers to all proxied requests:
+- `X-Forwarded-For`: Client IP address
+- `X-Forwarded-Proto`: Original protocol (http/https)
+- `X-Forwarded-Host`: Original Host header
+- `X-Forwarded-Port`: Original port number
+
+## Example: Basic HTTP Proxy
+
+```typescript
+import { createProxyServer } from "portless";
+
+const routes = [
+  { hostname: "api.localhost", port: 3000 },
+  { hostname: "app.localhost", port: 4000 },
+];
+
+const server = createProxyServer({
+  getRoutes: () => routes,
+  proxyPort: 8080,
+});
+
+server.listen(8080, () => {
+  console.log("Proxy listening on http://localhost:8080");
+});
+```
+
+## Example: HTTPS Proxy with TLS
+
+```typescript
+import { createProxyServer } from "portless";
+import * as fs from "node:fs";
+
+const server = createProxyServer({
+  getRoutes: () => store.loadRoutes(),
+  proxyPort: 443,
+  tls: {
+    cert: fs.readFileSync("/path/to/cert.pem"),
+    key: fs.readFileSync("/path/to/key.pem"),
+  },
+});
+
+server.listen(443, () => {
+  console.log("Proxy listening on https://localhost:443");
+});
+```
+
+## Example: Dynamic Routing
+
+```typescript
+import { createProxyServer, RouteStore } from "portless";
+
+const store = new RouteStore("/tmp/portless");
+store.ensureDir();
+
+const server = createProxyServer({
+  getRoutes: () => store.loadRoutes(),
+  proxyPort: 8080,
+  onError: (msg) => console.error(`[ERROR] ${msg}`),
+});
+
+server.listen(8080);
+
+// Routes can be added/removed dynamically
+store.addRoute("new-app.localhost", 5000, process.pid);
+
+// The next request will see the updated routes
+```
+
+## Error Handling
+
+The proxy server handles several error conditions automatically:
+
+| Status Code | Condition | Behavior |
+|-------------|-----------|----------|
+| 400 | Missing Host header | Returns plain text error |
+| 404 | No route for hostname | Returns HTML page listing active routes |
+| 502 | Backend connection failed | Returns HTML error page |
+| 508 | Loop detected | Returns HTML error with fix suggestion |
+
+## Type Definitions
+
+```typescript
+type ProxyServer = http.Server | net.Server;
+
+interface ProxyServerOptions {
+  getRoutes: () => RouteInfo[];
+  proxyPort: number;
+  onError?: (message: string) => void;
+  tls?: {
+    cert: Buffer;
+    key: Buffer;
+    SNICallback?: (
+      servername: string,
+      cb: (err: Error | null, ctx?: import("node:tls").SecureContext) => void
+    ) => void;
+  };
+}
+
+interface RouteInfo {
+  hostname: string;
+  port: number;
+}
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="RouteStore" icon="database" href="/api/routes">
+    Manage route mappings with persistence
+  </Card>
+  <Card title="Type Definitions" icon="code" href="/api/types">
+    Complete type reference
+  </Card>
+</CardGroup>

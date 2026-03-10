@@ -1,0 +1,154 @@
+---
+title: "portless list"
+description: "Show all active routes"
+---
+
+## Overview
+
+The `list` command displays all currently registered routes in the Portless proxy. This includes both routes created by running apps and static aliases.
+
+## Syntax
+
+```bash
+portless list
+```
+
+## Output Format
+
+Each route is displayed on a single line with the following information:
+
+- **Public URL** - The full URL to access the service (e.g. `http://myapp.localhost:1355`)
+- **Target** - The local port where the service is listening (e.g. `localhost:4123`)
+- **Status** - Either `(pid XXXX)` for running processes or `(alias)` for static routes
+
+## Examples
+
+### Basic Output
+
+```bash
+portless list
+```
+
+Output:
+```
+Active routes:
+
+  http://myapp.localhost:1355     ->  localhost:4123  (pid 12345)
+  http://api.myapp.localhost:1355 ->  localhost:4567  (pid 12346)
+  http://postgres.localhost:1355  ->  localhost:5432  (alias)
+```
+
+### No Routes
+
+If no routes are registered:
+
+```bash
+portless list
+```
+
+Output:
+```
+No active routes.
+Start an app with: portless <name> <command>
+```
+
+### HTTPS Proxy
+
+When the proxy is running with `--https`, URLs show `https://` instead of `http://`:
+
+```bash
+portless list
+```
+
+Output:
+```
+Active routes:
+
+  https://myapp.localhost:1355    ->  localhost:4123  (pid 12345)
+```
+
+## Route Types
+
+### Regular Routes (Process-Tracked)
+
+Routes created by `portless run` or `portless <name>` show the process ID:
+
+```
+http://myapp.localhost:1355  ->  localhost:4123  (pid 12345)
+```
+
+- Automatically removed when the process exits
+- Tracked by PID for lifecycle management
+
+### Static Aliases
+
+Routes created by `portless alias` show `(alias)`:
+
+```
+http://postgres.localhost:1355  ->  localhost:5432  (alias)
+```
+
+- Persist until explicitly removed with `portless alias --remove`
+- Not tied to any process (PID is 0)
+
+## Use Cases
+
+### Check What's Running
+
+Quickly see which services are accessible through the proxy:
+
+```bash
+portless list
+```
+
+### Debug Route Conflicts
+
+If you get a route conflict error, use `list` to see which process owns the route:
+
+```bash
+portless myapp next dev
+# Error: Route "myapp" is already registered by PID 12345.
+
+portless list
+# Shows which PID owns the route
+```
+
+### Verify Aliases
+
+Confirm that your static aliases are registered:
+
+```bash
+portless alias postgres 5432
+portless list
+# Verify postgres.localhost:1355 appears
+```
+
+### Monorepo Overview
+
+See all services running in your monorepo:
+
+```bash
+portless list
+```
+
+Output:
+```
+Active routes:
+
+  http://web.localhost:1355       ->  localhost:4123  (pid 12345)
+  http://api.localhost:1355       ->  localhost:4456  (pid 12346)
+  http://admin.localhost:1355     ->  localhost:4789  (pid 12347)
+  http://postgres.localhost:1355  ->  localhost:5432  (alias)
+  http://redis.localhost:1355     ->  localhost:6379  (alias)
+```
+
+## Related Commands
+
+- [`portless run`](/commands/run) - Start an app with inferred name
+- [`portless <name>`](/commands/app) - Start an app with explicit name
+- [`portless alias`](/commands/alias) - Create a static route
+- [`portless proxy start`](/commands/proxy) - Start the proxy server
+
+## Exit Codes
+
+- **0** - Success (routes displayed or "no routes" message shown)

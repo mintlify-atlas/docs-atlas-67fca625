@@ -1,0 +1,167 @@
+---
+title: State Directory
+description: Understanding Portless state management and directory structure
+---
+
+Portless stores its runtime state in a state directory that contains route registrations, process IDs, port assignments, and TLS certificates. The location of this directory depends on whether the proxy is running on a privileged or non-privileged port.
+
+## Directory Location
+
+Portless automatically selects the state directory based on the proxy port:
+
+<CardGroup cols={2}>
+  <Card title="Non-Privileged Ports" icon="user">
+    **Ports >= 1024** (default: 1355)
+    
+    Location: `~/.portless`
+    
+    User-specific state. Each user has their own isolated state directory.
+  </Card>
+  
+  <Card title="Privileged Ports" icon="shield">
+    **Ports < 1024** (e.g., 80, 443)
+    
+    Location: `/tmp/portless`
+    
+    System-wide state. Shared between root and non-root processes to enable apps to register routes when the proxy runs as root.
+  </Card>
+</CardGroup>
+
+### Why Different Directories?
+
+Privileged ports (below 1024) require root access to bind. When you run `sudo portless proxy start -p 80`, the proxy process runs as root. If apps running as your regular user need to register routes, they must write to a shared location accessible by both root and non-root processes.
+
+The solution: privileged ports use `/tmp/portless` (world-writable), while non-privileged ports use `~/.portless` (user-specific).
+
+## Directory Contents
+
+The state directory contains the following files:
+
+```
+~/.portless/
+├── routes.json           # Active route registrations
+├── proxy.port            # Port the proxy is listening on
+├── proxy.pid             # PID of the proxy process
+├── proxy.tls             # Marker file (present when HTTPS is enabled)
+├── proxy.log             # Proxy output (daemon mode)
+├── ca.crt                # Local CA certificate (HTTPS mode)
+├── ca.key                # Local CA private key (HTTPS mode)
+├── localhost.crt         # Wildcard cert for *.localhost (HTTPS mode)
+└── localhost.key         # Private key for *.localhost cert
+```
+
+### File Details
+
+<ResponseField name="routes.json" type="file">
+  JSON array of active routes. Each route maps a hostname to a local port and process ID.
+  
+  Example:
+  ```json
+  [
+    {
+      "hostname": "myapp.localhost",
+      "port": 4123,
+      "pid": 12345
+    },
+    {
+      "hostname": "api.localhost",
+      "port": 4567,
+      "pid": 12346
+    }
+  ]
+  ```
+  
+  This file is watched by the proxy and automatically reloaded when changed. Apps add and remove routes by writing to this file with file locking.
+</ResponseField>
+
+<ResponseField name="proxy.port" type="file">
+  Contains the port number the proxy is listening on (e.g., `1355` or `80`).
+  
+  Portless reads this file to discover which port to connect to when registering routes.
+</ResponseField>
+
+<ResponseField name="proxy.pid" type="file">
+  Contains the process ID of the running proxy server.
+  
+  Used by `portless proxy stop` to send a SIGTERM signal to the correct process.
+</ResponseField>
+
+<ResponseField name="proxy.tls" type="file">
+  Marker file that exists when the proxy is running with HTTPS/TLS enabled.
+  
+  Portless checks for this file to determine whether to use `http://` or `https://` URLs.
+</ResponseField>
+
+<ResponseField name="proxy.log" type="file">
+  Contains stdout and stderr from the proxy when running in daemon mode (the default).
+  
+  Useful for debugging if the proxy fails to start.
+</ResponseField>
+
+<ResponseField name="ca.crt" type="file">
+  The local Certificate Authority (CA) certificate, generated on first use of HTTPS mode.
+  
+  This CA is added to your system trust store so browsers trust certificates issued by it.
+</ResponseField>
+
+<ResponseField name="localhost.crt" type="file">
+  Wildcard certificate for `*.localhost` subdomains, signed by the local CA.
+  
+  This certificate is used by the proxy when serving HTTPS traffic.
+</ResponseField>
+
+## Overriding the State Directory
+
+You can override the automatic directory selection using the `PORTLESS_STATE_DIR` environment variable:
+
+```bash
+# Use a custom state directory
+export PORTLESS_STATE_DIR=/var/lib/portless
+portless proxy start
+```
+
+This is useful in scenarios where:
+- You want to isolate state for a specific project
+- You need consistent behavior regardless of the proxy port
+- You're running in a containerized environment with specific mount points
+
+## State Discovery
+
+When you run `portless myapp npm start` without the proxy running, Portless needs to discover whether a proxy exists and where its state is stored. The discovery process:
+
+1. **Check `PORTLESS_STATE_DIR`**: If set, use that directory and read `proxy.port` from it
+2. **Check user directory** (`~/.portless`): Read `proxy.port` and verify the proxy is actually listening
+3. **Check system directory** (`/tmp/portless`): Read `proxy.port` and verify the proxy is listening
+4. **Fall back**: Use the default port (from `PORTLESS_PORT` or 1355) and select the appropriate directory
+
+This allows Portless to "just work" whether the proxy is running on the default port, a custom port, as root, or as your user.
+
+## Multi-User Considerations
+
+When using privileged ports with `/tmp/portless`:
+
+- The directory and files are created with permissions allowing both root and non-root access
+- Apps running as different users can all register routes
+- File locking prevents race conditions when multiple apps modify `routes.json` simultaneously
+- The proxy automatically fixes file ownership after writing to ensure non-root processes can read them
+
+## Cleaning Up
+
+To remove Portless state:
+
+```bash
+# Stop the proxy first
+portless proxy stop
+
+# Remove state directory
+rm -rf ~/.portless
+
+# If using privileged ports:
+sudo rm -rf /tmp/portless
+```
+
+If you enabled hosts file syncing, also clean up `/etc/hosts`:
+
+```bash
+sudo portless hosts clean
+```

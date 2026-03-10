@@ -1,0 +1,161 @@
+---
+title: "portless run"
+description: "Infer project name and run through the proxy"
+---
+
+## Overview
+
+The `portless run` command automatically infers your project name from your codebase and runs your dev server through the Portless proxy. This is the recommended way to use Portless since it requires no manual configuration.
+
+## Syntax
+
+```bash
+portless run [options] <command...>
+```
+
+## Name Inference
+
+Portless infers the project name automatically by checking these sources in order:
+
+1. **package.json** - Walks up directories looking for a `name` field
+2. **Git repo** - Uses the root directory name of the repository
+3. **Current directory** - Uses the basename of the current working directory
+
+### Git Worktree Support
+
+When you're in a git worktree, `portless run` automatically prepends the branch name as a subdomain prefix:
+
+- **Main worktree** (main/master branch) - No prefix, uses plain project name
+- **Linked worktree** (e.g. `fix-ui` branch) - Branch name becomes prefix: `fix-ui.<project>.localhost`
+- **Branch with slashes** (e.g. `feature/auth`) - Uses last segment: `auth.<project>.localhost`
+
+This means you can add `portless run` to your package.json once and it works everywhere without conflicts.
+
+## Options
+
+### `--force`
+
+Override an existing route registered by another process.
+
+```bash
+portless run --force next dev
+```
+
+### `--app-port <number>`
+
+Use a fixed port for the app instead of automatic port assignment. Must be between 1 and 65535.
+
+```bash
+portless run --app-port 3000 pnpm start
+```
+
+### `--help`, `-h`
+
+Show help for the `run` command.
+
+```bash
+portless run --help
+```
+
+### `--`
+
+Stop flag parsing. Everything after `--` is passed directly to your command.
+
+```bash
+portless run -- next dev --turbo
+```
+
+## Examples
+
+### Basic Usage
+
+```bash
+# Next.js
+portless run next dev
+# -> http://<project>.localhost:1355
+
+# Vite
+portless run vite dev
+# -> http://<project>.localhost:1355
+
+# Custom command
+portless run pnpm dev
+# -> http://<project>.localhost:1355
+```
+
+### With package.json
+
+```json
+{
+  "name": "myapp",
+  "scripts": {
+    "dev": "portless run next dev"
+  }
+}
+```
+
+Running `pnpm dev` will start your app at `http://myapp.localhost:1355`.
+
+### In Git Worktrees
+
+```bash
+# Main worktree (main branch)
+portless run next dev
+# -> http://myapp.localhost:1355
+
+# Linked worktree (auth branch)
+portless run next dev
+# -> http://auth.myapp.localhost:1355
+```
+
+### Fixed Port
+
+```bash
+# Force app to use port 3000
+portless run --app-port 3000 next dev
+```
+
+### Override Route
+
+```bash
+# Replace existing route even if another process owns it
+portless run --force next dev
+```
+
+## Environment Variables
+
+The following environment variables are injected into your command:
+
+- **`PORT`** - Ephemeral port the app should listen on (e.g. 4123)
+- **`HOST`** - Always set to `127.0.0.1`
+- **`PORTLESS_URL`** - Public URL of your app (e.g. `http://myapp.localhost:1355`)
+- **`__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS`** - Set to `.localhost` for Vite compatibility
+
+## Proxy Auto-Start
+
+If the proxy is not running, `portless run` will automatically start it:
+
+- **Privileged port** (< 1024): Prompts for sudo permission
+- **Non-privileged port** (default 1355): Starts silently without sudo
+
+You can skip the proxy auto-start by responding with `skip` when prompted.
+
+## Skip Portless
+
+To run your command directly without the proxy:
+
+```bash
+PORTLESS=0 pnpm dev
+# or
+PORTLESS=skip pnpm dev
+```
+
+## Framework Support
+
+Most frameworks respect the `PORT` environment variable. For frameworks that don't (Vite, Astro, React Router, Angular, Expo, React Native), Portless automatically injects the correct `--port` and `--host` flags.
+
+## Exit Codes
+
+- **0** - Success
+- **1** - Error (no command provided, route conflict, proxy start failure)
+- **Exit code of child process** - Propagated from your dev server
