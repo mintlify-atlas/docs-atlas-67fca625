@@ -1,0 +1,108 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "Portless",
+  "projectDescription": "Replace port numbers with stable, named .localhost URLs for local development.",
+  "theme": "aspen",
+  "primaryColor": "#3b82f6",
+  "lightColor": "#60a5fa",
+  "darkColor": "#2563eb",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "quickstart", "why"]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": ["how-it-works", "git-worktrees", "subdomains"]
+          },
+          {
+            "group": "Features",
+            "pages": ["https", "wildcard-routing", "static-routes"]
+          },
+          {
+            "group": "Configuration",
+            "pages": ["environment-variables", "state-directory", "safari-dns"]
+          },
+          {
+            "group": "Advanced",
+            "pages": ["proxying-between-apps", "framework-support"]
+          }
+        ]
+      },
+      {
+        "tab": "Command Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "commands/run",
+              "commands/app",
+              "commands/alias",
+              "commands/list",
+              "commands/trust",
+              "commands/hosts",
+              "commands/proxy"
+            ]
+          },
+          {
+            "group": "Options",
+            "pages": ["commands/flags", "commands/environment"]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Programmatic API",
+            "pages": [
+              "api/overview",
+              "api/proxy",
+              "api/routes",
+              "api/types"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Resources",
+        "groups": [
+          {
+            "group": "Resources",
+            "pages": ["troubleshooting", "changelog", "contributing"]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Stable named .localhost URLs instead of port numbers",
+    "Auto-starting reverse proxy on port 1355",
+    "HTTP/2 and HTTPS support with auto-generated certificates",
+    "Git worktree auto-detection with branch-based subdomains",
+    "Wildcard subdomain routing",
+    "Static route aliases for external services",
+    "Automatic framework port injection (Vite, Astro, Angular, etc.)",
+    "Loop detection for misconfigured proxies",
+    "Cross-platform (macOS and Linux)"
+  ],
+  "publicApiSurface": [
+    "portless run <cmd>",
+    "portless <name> <cmd>",
+    "portless alias <name> <port>",
+    "portless list",
+    "portless trust",
+    "portless hosts sync",
+    "portless hosts clean",
+    "portless proxy start",
+    "portless proxy stop",
+    "createProxyServer()",
+    "RouteStore",
+    "RouteInfo",
+    "ProxyServerOptions"
+  ]
+}
